@@ -77,6 +77,9 @@ async function viewCampaignList(app) {
 }
 
 function campaignCard(c) {
+  const conv = c.total_clicks > 0
+    ? ((c.total_sales / c.total_clicks) * 100).toFixed(2)
+    : '0.00';
   return `
     <div class="campaign-card" onclick="navigate('/campaign/${c.id}')">
       <div class="cc-header">
@@ -88,6 +91,9 @@ function campaignCard(c) {
           <button class="icon-btn" title="Editar" onclick="navigate('/campaign/${c.id}/edit')">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
+          <button class="icon-btn" title="Resetar dados" onclick="confirmReset(${c.id}, '${esc(c.name)}')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+          </button>
           <button class="icon-btn danger" title="Deletar" onclick="confirmDelete(${c.id}, '${esc(c.name)}')">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
           </button>
@@ -98,10 +104,22 @@ function campaignCard(c) {
         <span>${c.destination_count} destino${c.destination_count !== 1 ? 's' : ''}</span>
         <span>${fmtDate(c.created_at)}</span>
       </div>
-      <div class="cc-stats">
+      <div class="cc-stats-grid">
         <div class="cc-stat">
           <span class="cc-stat-val">${(c.total_clicks || 0).toLocaleString('pt-BR')}</span>
           <span class="cc-stat-lbl">Cliques</span>
+        </div>
+        <div class="cc-stat">
+          <span class="cc-stat-val cc-stat-green">${fmtBRL(c.total_revenue || 0)}</span>
+          <span class="cc-stat-lbl">Faturamento</span>
+        </div>
+        <div class="cc-stat">
+          <span class="cc-stat-val">${(c.total_sales || 0).toLocaleString('pt-BR')}</span>
+          <span class="cc-stat-lbl">Vendas</span>
+        </div>
+        <div class="cc-stat">
+          <span class="cc-stat-val">${conv}%</span>
+          <span class="cc-stat-lbl">Conversão</span>
         </div>
       </div>
     </div>`;
@@ -391,195 +409,88 @@ async function viewDashboard(app, id) {
         </div>
       </div>
 
-      ${stats.utmifyError ? `<div class="alert alert-warn">⚠ ${esc(stats.utmifyError)}</div>` : ''}
-      ${!stats.utmifyConnected && camp.utmify_dashboard_id
-        ? `<div class="alert alert-info">💡 Configure o token Utmify em <a href="#/settings">Configurações</a> para ver faturamento.</div>`
-        : ''}
-
       <div class="kpi-grid">
         ${kpi('👆', stats.totalClicks.toLocaleString('pt-BR'), 'Cliques Recebidos', 'primary')}
-        ${kpi('💰', fmtBRL(totalRev),  'Faturamento Total')}
+        ${kpi('💰', fmtBRL(totalRev), 'Faturamento Total')}
         ${kpi('🛍', totalSales.toLocaleString('pt-BR'), 'Vendas')}
         ${kpi('📈', avgConv + '%', 'Conversão Geral')}
       </div>
 
-      <div class="section-card">
-        <h2>Performance por Destino</h2>
-        <div class="table-wrap">
-          <table class="tbl">
-            <thead>
-              <tr>
-                <th>Destino</th>
-                <th>SRC</th>
-                <th>Peso</th>
-                <th class="r">Cliques</th>
-                <th class="r">% Real</th>
-                <th class="r">Faturamento</th>
-                <th class="r">Vendas</th>
-                <th class="r">Reemb.</th>
-                <th class="r">Conversão</th>
-                <th class="r">Rev/Click</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${stats.destinations.map((d, i) => `
-                <tr>
-                  <td>
-                    <div class="dest-name-cell">
-                      <span class="dbadge" style="background:${COLORS[i]}">${i+1}</span>
-                      <a href="${esc(d.url)}" target="_blank" class="tbl-link" title="${esc(d.url)}">${truncUrl(d.url)}</a>
-                    </div>
-                  </td>
-                  <td><code class="src-tag">${esc(d.src)}</code></td>
-                  <td><span class="w-tag">${d.weight}%</span></td>
-                  <td class="r">${d.clicks.toLocaleString('pt-BR')}</td>
-                  <td class="r">${d.pctReal}%</td>
-                  <td class="r ${d.revenue>0?'pos':''}">${fmtBRL(d.revenue)}</td>
-                  <td class="r">${d.sales}</td>
-                  <td class="r ${d.refunds>0?'neg':''}">${d.refunds}</td>
-                  <td class="r">${d.conversion}%</td>
-                  <td class="r">${fmtBRL(d.revenuePerClick)}</td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
+      <div class="dest-comp-grid">
+        ${stats.destinations.map((d, i) => `
+          <div class="dest-comp-card">
+            <div class="dcc-header">
+              <span class="dbadge" style="background:${COLORS[i]}">${i+1}</span>
+              <div class="dcc-info">
+                <a href="${esc(d.url)}" target="_blank" class="dcc-url" title="${esc(d.url)}">${truncUrl(d.url)}</a>
+                <div><code class="src-tag">${esc(d.src)}</code><span class="w-tag" style="margin-left:6px">${d.weight}%</span></div>
+              </div>
+            </div>
+            <div class="dcc-stats">
+              <div class="dcc-stat">
+                <span class="dcc-val">${d.clicks.toLocaleString('pt-BR')}</span>
+                <span class="dcc-lbl">Cliques</span>
+              </div>
+              <div class="dcc-stat">
+                <span class="dcc-val ${d.revenue>0?'pos':''}">${fmtBRL(d.revenue)}</span>
+                <span class="dcc-lbl">Faturamento</span>
+              </div>
+              <div class="dcc-stat">
+                <span class="dcc-val">${d.sales}</span>
+                <span class="dcc-lbl">Vendas</span>
+              </div>
+              <div class="dcc-stat">
+                <span class="dcc-val">${d.conversion}%</span>
+                <span class="dcc-lbl">Conversão</span>
+              </div>
+            </div>
+          </div>`).join('')}
       </div>
 
       <div class="charts-row">
+        <div class="section-card" style="margin-bottom:0">
+          <h3>Funil de Tráfego</h3>
+          <div class="funnel">
+            ${funnelStep('Total de Cliques', stats.totalClicks, stats.totalClicks, '#64748b')}
+            ${stats.destinations.map((d, i) =>
+              funnelStep(`Oferta ${i+1} — ${esc(d.src)}`, d.clicks, stats.totalClicks, COLORS[i])
+            ).join('')}
+            ${stats.lostClicks > 0
+              ? funnelStep('Não rastreados ⚠', stats.lostClicks, stats.totalClicks, '#ef4444')
+              : ''}
+          </div>
+        </div>
         <div class="chart-card">
           <h3>Distribuição de Cliques</h3>
-          <canvas id="ch-donut" height="240"></canvas>
-        </div>
-        <div class="chart-card">
-          <h3>Faturamento por Destino</h3>
-          <canvas id="ch-rev" height="240"></canvas>
+          <canvas id="ch-donut" height="260"></canvas>
         </div>
       </div>
 
-      <div class="section-card">
-        <h3 style="margin-bottom:16px">Cliques (últimos 30 dias)</h3>
-        <canvas id="ch-line" height="100"></canvas>
-      </div>
+      ${stats.orphanSales?.total > 0 ? `
+        <div class="alert alert-warn">
+          ⚠ ${stats.orphanSales.total} venda(s) com parâmetro não mapeado (${fmtBRL(stats.orphanSales.revenue)} aprovadas).
+        </div>` : ''}`;
 
-      <!-- Payt Sales Panel -->
-      <div class="section-card">
-        <h2>Vendas por Webhook Payt ${stats.localSalesActive
-          ? '<span class="badge-live">&#x25CF; ao vivo</span>'
-          : '<span class="badge-off">sem dados</span>'}</h2>
-        ${stats.localSalesActive ? `
-        <div class="table-wrap">
-          <table class="tbl">
-            <thead><tr>
-              <th>Destino</th><th>SRC</th>
-              <th class="r">Aprovadas</th><th class="r">Faturamento</th>
-              <th class="r">Reembolsos</th><th class="r">Chargeback</th>
-              <th class="r">Pendentes</th><th class="r">Conversão</th>
-            </tr></thead>
-            <tbody>
-              ${stats.destinations.map((d, i) => `
-                <tr>
-                  <td><div class="dest-name-cell">
-                    <span class="dbadge" style="background:${COLORS[i]}">${i+1}</span>
-                    <span style="color:var(--text2);font-size:.82rem">${truncUrl(d.url)}</span>
-                  </div></td>
-                  <td><code class="src-tag">${esc(d.src)}</code></td>
-                  <td class="r pos">${d.sales}</td>
-                  <td class="r ${d.revenue>0?'pos':''}">${fmtBRL(d.revenue)}</td>
-                  <td class="r ${d.refunds>0?'neg':''}">${d.refunds}</td>
-                  <td class="r ${(d.chargebacks||0)>0?'neg':''}">${d.chargebacks||0}</td>
-                  <td class="r">${d.pending||0}</td>
-                  <td class="r">${d.conversion}%</td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-        ${stats.orphanSales?.total > 0 ? `
-          <div class="alert alert-warn" style="margin-top:12px">
-            ⚠ ${stats.orphanSales.total} venda(s) com src não mapeado (${fmtBRL(stats.orphanSales.revenue)} aprovadas).
-          </div>` : ''}
-        ` : `<div class="wh-empty">
-          <p>Nenhuma venda recebida via webhook ainda.</p>
-          <a href="#/webhook-info" class="btn btn-ghost btn-sm">Como configurar</a>
-        </div>`}
-      </div>
-
-      <div class="section-card">
-        <h2>Funil de Tráfego</h2>
-        <div class="funnel">
-          ${funnelStep('Cliques no domínio principal', stats.totalClicks, stats.totalClicks, '#475569')}
-          ${stats.destinations.map((d, i) =>
-            funnelStep(`Destino ${i+1} — ${d.src}`, d.clicks, stats.totalClicks, COLORS[i])
-          ).join('')}
-          ${stats.lostClicks > 0
-            ? funnelStep('Sem destino registrado ⚠', stats.lostClicks, stats.totalClicks, '#ef4444')
-            : ''}
-        </div>
-      </div>`;
-
-    // Charts
-    const labels = stats.destinations.map((d, i) => `D${i+1} (${d.src})`);
-
-    _charts.donut = new Chart(document.getElementById('ch-donut'), {
-      type: 'doughnut',
-      data: {
-        labels,
-        datasets: [{ data: stats.destinations.map(d => d.clicks), backgroundColor: COLORS, borderWidth: 2, borderColor: '#ffffff' }]
-      },
-      options: {
-        responsive: true,
-        cutout: '65%',
-        plugins: {
-          legend: { position: 'bottom', labels: { color: '#64748b', padding: 14, font: { size: 12 } } }
+    if (stats.totalClicks > 0) {
+      const labels = stats.destinations.map((d, i) => `Oferta ${i+1} (${d.src})`);
+      _charts.donut = new Chart(document.getElementById('ch-donut'), {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [{ data: stats.destinations.map(d => d.clicks), backgroundColor: COLORS, borderWidth: 2, borderColor: '#ffffff' }]
+        },
+        options: {
+          responsive: true,
+          cutout: '65%',
+          plugins: {
+            legend: { position: 'bottom', labels: { color: '#64748b', padding: 14, font: { size: 12 } } }
+          }
         }
-      }
-    });
-
-    _charts.rev = new Chart(document.getElementById('ch-rev'), {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [{ label: 'Faturamento', data: stats.destinations.map(d => d.revenue), backgroundColor: COLORS, borderRadius: 6 }]
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: { ticks: { color: '#64748b', callback: v => 'R$' + v }, grid: { color: '#f1f5f9' } },
-          x: { ticks: { color: '#64748b' }, grid: { display: false } }
-        }
-      }
-    });
-
-    // Build time series datasets
-    const allDates = [...new Set(stats.timeSeries.map(r => r.date))].sort();
-    const lineDatasets = stats.destinations.map((d, i) => {
-      const map = Object.fromEntries(
-        stats.timeSeries.filter(r => r.destination_id === d.id).map(r => [r.date, r.n])
-      );
-      return {
-        label: `D${i+1} (${d.src})`,
-        data: allDates.map(date => map[date] || 0),
-        borderColor: COLORS[i],
-        backgroundColor: COLORS[i] + '22',
-        tension: 0.3,
-        fill: true,
-        pointRadius: 3
-      };
-    });
-
-    _charts.line = new Chart(document.getElementById('ch-line'), {
-      type: 'line',
-      data: { labels: allDates, datasets: lineDatasets },
-      options: {
-        responsive: true,
-        interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { labels: { color: '#64748b', font: { size: 12 } } } },
-        scales: {
-          y: { ticks: { color: '#64748b' }, grid: { color: '#f1f5f9' } },
-          x: { ticks: { color: '#64748b', maxTicksLimit: 10 }, grid: { display: false } }
-        }
-      }
-    });
+      });
+    } else {
+      const canvas = document.getElementById('ch-donut');
+      if (canvas) canvas.parentElement.innerHTML += '<p style="text-align:center;color:var(--text3);font-size:.82rem;margin-top:12px">Sem cliques ainda</p>';
+    }
 
   } catch (e) {
     app.innerHTML = errorBlock('Erro ao carregar dashboard: ' + e.message);
@@ -588,10 +499,10 @@ async function viewDashboard(app, id) {
 
 function funnelStep(label, count, total, color) {
   const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
-  const width = Math.max(parseFloat(pct), 8);
+  const width = Math.max(parseFloat(pct), 6);
   return `
     <div class="funnel-row">
-      <div class="funnel-bar" style="width:${width}%;background:${color}20;border-left:3px solid ${color}">
+      <div class="funnel-bar" style="width:${width}%;background:${color}18;border-left:3px solid ${color}">
         <span class="funnel-lbl">${label}</span>
         <span class="funnel-cnt">${count.toLocaleString('pt-BR')} <small>(${pct}%)</small></span>
       </div>
@@ -872,6 +783,13 @@ function confirmDelete(id, name) {
   if (!confirm(`Deletar "${name}"? Todos os dados serão perdidos.`)) return;
   api.del(`/api/campaigns/${id}`)
     .then(() => { toast('Campanha deletada.', 'success'); viewCampaignList(document.getElementById('app')); })
+    .catch(e => toast('Erro: ' + e.message, 'error'));
+}
+
+function confirmReset(id, name) {
+  if (!confirm(`Resetar dados de "${name}"?\n\nIsso zerará todos os cliques e vendas.\nAs configurações da campanha serão mantidas.`)) return;
+  api.del(`/api/campaigns/${id}/reset`)
+    .then(() => { toast('Dados resetados com sucesso.', 'success'); viewCampaignList(document.getElementById('app')); })
     .catch(e => toast('Erro: ' + e.message, 'error'));
 }
 

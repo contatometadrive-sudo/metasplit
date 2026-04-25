@@ -74,11 +74,14 @@ app.post('/api/settings', (req, res) => {
 app.get('/api/campaigns', (req, res) => {
   const rows = db.prepare(`
     SELECT c.*,
-      COUNT(DISTINCT cl.id) AS total_clicks,
-      COUNT(DISTINCT d.id)  AS destination_count
+      COUNT(DISTINCT cl.id)                                              AS total_clicks,
+      COUNT(DISTINCT d.id)                                               AS destination_count,
+      COALESCE(SUM(CASE WHEN s.status='approved' THEN s.amount ELSE 0 END),0) AS total_revenue,
+      COALESCE(SUM(CASE WHEN s.status='approved' THEN 1     ELSE 0 END),0)    AS total_sales
     FROM campaigns c
     LEFT JOIN clicks       cl ON cl.campaign_id = c.id
     LEFT JOIN destinations d  ON  d.campaign_id = c.id
+    LEFT JOIN sales        s  ON  s.campaign_id = c.id
     GROUP BY c.id
     ORDER BY c.created_at DESC
   `).all();
@@ -173,6 +176,25 @@ app.delete('/api/campaigns/:id', (req, res) => {
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
   db.prepare('DELETE FROM campaigns WHERE id = ?').run(req.params.id);
   res.json({ success: true });
+});
+
+// ─── Reset campaign data ──────────────────────────────────────────────────────
+
+app.delete('/api/campaigns/:id/reset', (req, res) => {
+  const c = db.prepare('SELECT id FROM campaigns WHERE id = ?').get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
+
+  const reset = transaction(() => {
+    db.prepare('DELETE FROM clicks WHERE campaign_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM sales  WHERE campaign_id = ?').run(req.params.id);
+  });
+
+  try {
+    reset();
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Generate redirect ────────────────────────────────────────────────────────

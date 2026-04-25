@@ -37,7 +37,7 @@ body {
   background: rgba(255,255,255,.95);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
-  height: 58px;
+  height: 64px;
   padding: 0 28px;
   display: flex;
   align-items: center;
@@ -55,11 +55,24 @@ body {
   letter-spacing: -.02em;
 }
 
-.nav-brand svg { color: var(--accent); }
+.nav-brand svg { color: var(--accent); flex-shrink: 0; }
+.nav-brand-text { display: flex; flex-direction: column; gap: 1px; }
 .nav-brand span {
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  line-height: 1.2;
+}
+.nav-tagline {
+  font-size: .68rem;
+  font-weight: 400;
+  color: var(--text3);
+  -webkit-text-fill-color: var(--text3);
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 340px;
 }
 
 .nav-links { display: flex; gap: 4px; }
@@ -183,17 +196,68 @@ body {
 .cc-actions { display: flex; gap: 2px; flex-shrink: 0; }
 .cc-url  { font-size: .75rem; color: var(--text3); margin-bottom: 12px; word-break: break-all; }
 .cc-meta { display: flex; gap: 14px; font-size: .75rem; color: var(--text3); margin-bottom: 14px; }
-.cc-stats { display: flex; gap: 10px; }
-
-.cc-stat {
-  background: rgba(99,102,241,.06);
-  border: 1px solid rgba(99,102,241,.15);
-  border-radius: 6px;
-  padding: 6px 14px;
-  display: flex; flex-direction: column; align-items: center;
+.cc-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
-.cc-stat-val { font-size: 1.1rem; font-weight: 700; color: var(--accent); }
-.cc-stat-lbl { font-size: .7rem; color: var(--text3); }
+.cc-stat {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex; flex-direction: column;
+}
+.cc-stat-val { font-size: .95rem; font-weight: 700; color: var(--text); }
+.cc-stat-val.cc-stat-green { color: #059669; }
+.cc-stat-lbl { font-size: .68rem; color: var(--text3); margin-top: 1px; }
+
+/* ─── Destination Comparison Cards ───────────────────────────────────────── */
+.dest-comp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.dest-comp-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--rl);
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.04);
+}
+.dcc-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.dcc-info { flex: 1; min-width: 0; }
+.dcc-url {
+  display: block;
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  margin-bottom: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dcc-url:hover { color: var(--accent); }
+.dcc-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.dcc-stat {
+  display: flex;
+  flex-direction: column;
+}
+.dcc-val { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+.dcc-lbl { font-size: .7rem; color: var(--text3); margin-top: 2px; }
 
 /* ─── Empty / Error States ────────────────────────────────────────────────── */
 .empty-state {
@@ -536,6 +600,7 @@ body {
 @media (max-width: 460px) {
   .nav-link { padding: 5px 10px; font-size: .8rem; }
   .kpi-grid { grid-template-columns: 1fr; }
+  .nav-tagline { display: none; }
 }
 
 /* ─── Webhook page ────────────────────────────────────────────────────────── */

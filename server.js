@@ -132,6 +132,42 @@ app.get('/api/campaigns/:id', (req, res) => {
   res.json({ ...c, destinations });
 });
 
+app.put('/api/campaigns/:id', (req, res) => {
+  const { name, domain_url, destinations } = req.body;
+
+  if (!name || !domain_url || !Array.isArray(destinations) || !destinations.length)
+    return res.status(400).json({ error: 'Campos obrigatórios: name, domain_url, destinations.' });
+
+  if (destinations.length > 4)
+    return res.status(400).json({ error: 'Máximo de 4 destinos permitidos.' });
+
+  const total = destinations.reduce((s, d) => s + Number(d.weight || 0), 0);
+  if (Math.abs(total - 100) > 0.5)
+    return res.status(400).json({ error: `Total do tráfego deve ser 100% (atual: ${total.toFixed(1)}%).` });
+
+  const c = db.prepare('SELECT id FROM campaigns WHERE id = ?').get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
+
+  const updC  = db.prepare('UPDATE campaigns SET name = ?, domain_url = ? WHERE id = ?');
+  const nullC = db.prepare('UPDATE clicks SET destination_id = NULL WHERE campaign_id = ?');
+  const delD  = db.prepare('DELETE FROM destinations WHERE campaign_id = ?');
+  const insD  = db.prepare('INSERT INTO destinations (campaign_id, url, src, weight, sort_order) VALUES (?, ?, ?, ?, ?)');
+
+  const update = transaction(() => {
+    updC.run(name, domain_url, req.params.id);
+    nullC.run(req.params.id);
+    delD.run(req.params.id);
+    destinations.forEach((d, i) => insD.run(req.params.id, d.url, d.src, Number(d.weight), i));
+  });
+
+  try {
+    update();
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.delete('/api/campaigns/:id', (req, res) => {
   const c = db.prepare('SELECT id FROM campaigns WHERE id = ?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
@@ -153,68 +189,8 @@ app.get('/api/campaigns/:id/generate', (req, res) => {
   const destsJson  = JSON.stringify(dests);
   const campaignId = c.id;
 
-  const html = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Redirecionando...</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{background:#0a0a0a;display:flex;align-items:center;justify-content:center;min-height:100vh}
-    .ring{width:44px;height:44px;border:3px solid #222;border-top-color:#6366f1;border-radius:50%;animation:s .75s linear infinite}
-    @keyframes s{to{transform:rotate(360deg)}}
-  </style>
-</head>
-<body>
-<div class="ring"></div>
-<script>
-(function(){
-  var DESTS = ${destsJson};
-  var TRACK = '${serverUrl}/api/track/${campaignId}';
-
-  var params = {};
-  location.search.slice(1).split('&').forEach(function(p){
-    if(!p) return;
-    var idx = p.indexOf('=');
-    var k = idx >= 0 ? p.slice(0, idx) : p;
-    var v = idx >= 0 ? p.slice(idx + 1) : '';
-    try { params[decodeURIComponent(k)] = decodeURIComponent(v); } catch(e) {}
-  });
-
-  // Weighted random pick
-  var total = DESTS.reduce(function(s, d){ return s + d.weight; }, 0);
-  var r = Math.random() * total;
-  var chosen = DESTS[DESTS.length - 1];
-  for (var i = 0; i < DESTS.length; i++) { r -= DESTS[i].weight; if (r <= 0) { chosen = DESTS[i]; break; } }
-
-  function buildUrl(base, extra) {
-    try {
-      var u = new URL(base);
-      Object.keys(params).forEach(function(k) { if (k !== 'src') u.searchParams.set(k, params[k]); });
-      Object.keys(extra).forEach(function(k) { u.searchParams.set(k, extra[k]); });
-      return u.toString();
-    } catch(e) { return base; }
-  }
-
-  var dest = buildUrl(chosen.url, { src: chosen.src });
-
-  function go() { window.location.replace(dest); }
-
-  try {
-    fetch(TRACK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      keepalive: true,
-      body: JSON.stringify({ destination_id: chosen.id, params: params, referrer: document.referrer || '' })
-    }).then(go, go);
-  } catch(e) { go(); }
-
-  setTimeout(go, 2500);
-})();
-</script>
-</body>
-</html>`;
+  // HTML mínimo — sem CSS, sem recursos externos, sem spinner. Redirect first, track after.
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title> </title></head><body><script>!function(){var D=${destsJson},T='${serverUrl}/api/track/${campaignId}',p={};location.search.slice(1).split('&').forEach(function(s){if(!s)return;var i=s.indexOf('=');try{p[decodeURIComponent(i<0?s:s.slice(0,i))]=decodeURIComponent(i<0?'':s.slice(i+1))}catch(e){}});var r=Math.random()*D.reduce(function(a,d){return a+d.weight},0),c=D[D.length-1];for(var i=0;i<D.length;i++){r-=D[i].weight;if(r<=0){c=D[i];break}}var eq=c.src.indexOf('='),pk=eq>=0?c.src.slice(0,eq):'src',pv=eq>=0?c.src.slice(eq+1):c.src,U=c.url;try{var u=new URL(c.url);for(var k in p){if(k!==pk)u.searchParams.set(k,p[k])}u.searchParams.set(pk,pv);U=u.toString()}catch(e){}window.location.replace(U);try{fetch(T,{method:'POST',headers:{'Content-Type':'application/json'},keepalive:!0,body:JSON.stringify({destination_id:c.id,params:p,referrer:document.referrer||''})})}catch(e){}}();<\/script></body></html>`;
 
   res.setHeader('Content-Disposition', 'attachment; filename="index.html"');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -501,7 +477,9 @@ app.post('/webhook/payt', (req, res) => {
     let campaignId    = null;
 
     if (src) {
-      const dest = db.prepare('SELECT * FROM destinations WHERE src = ?').get(src);
+      const dest = db.prepare(
+        "SELECT * FROM destinations WHERE src = ? OR (src LIKE '%=%' AND SUBSTR(src, INSTR(src,'=')+1) = ?)"
+      ).get(src, src);
       if (dest) {
         destinationId = dest.id;
         campaignId    = dest.campaign_id;

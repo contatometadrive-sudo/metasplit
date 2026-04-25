@@ -3,6 +3,7 @@
 const api = {
   get:    url       => fetch(url).then(r => r.json()),
   post:   (url, d) => fetch(url, { method:'POST',  headers:{'Content-Type':'application/json'}, body:JSON.stringify(d) }).then(r => r.json()),
+  put:    (url, d) => fetch(url, { method:'PUT',   headers:{'Content-Type':'application/json'}, body:JSON.stringify(d) }).then(r => r.json()),
   del:    url       => fetch(url, { method:'DELETE' }).then(r => r.json()),
 };
 
@@ -32,7 +33,11 @@ function handleRoute() {
   if (hash === '/create')           return viewCreate(app);
   if (hash === '/settings')         return viewSettings(app);
   if (hash === '/webhook-info')     return viewWebhookInfo(app);
-  if (hash.startsWith('/campaign/')) return viewDashboard(app, hash.split('/')[2]);
+  if (hash.startsWith('/campaign/')) {
+    const parts = hash.split('/');
+    if (parts[3] === 'edit') return viewEdit(app, parts[2]);
+    return viewDashboard(app, parts[2]);
+  }
   app.innerHTML = `<div class="empty-state"><p>Página não encontrada.</p><a href="#/" class="btn btn-primary">Voltar</a></div>`;
 }
 
@@ -80,6 +85,9 @@ function campaignCard(c) {
           <button class="icon-btn" title="Baixar redirect" onclick="downloadRedirect(${c.id})">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </button>
+          <button class="icon-btn" title="Editar" onclick="navigate('/campaign/${c.id}/edit')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
           <button class="icon-btn danger" title="Deletar" onclick="confirmDelete(${c.id}, '${esc(c.name)}')">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
           </button>
@@ -125,20 +133,6 @@ function viewCreate(app) {
       </fieldset>
 
       <fieldset class="fs">
-        <legend>Utmify (opcional)</legend>
-        <div class="frow">
-          <div class="fg">
-            <label>ID do Dashboard</label>
-            <input name="utmify_dashboard_id" class="fi" placeholder="id-do-dashboard">
-          </div>
-          <div class="fg">
-            <label>Nome do Dashboard</label>
-            <input name="utmify_dashboard_name" class="fi" placeholder="Nome do dashboard">
-          </div>
-        </div>
-      </fieldset>
-
-      <fieldset class="fs">
         <div class="fs-head">
           <legend>Destinos</legend>
           <button type="button" id="add-dest-btn" class="btn btn-ghost btn-sm" onclick="addDest()">+ Destino</button>
@@ -179,8 +173,8 @@ function addDest() {
         <input type="url" name="du_${id}" required class="fi" placeholder="https://oferta.com/pagina">
       </div>
       <div class="fg fg-src">
-        <label>SRC *</label>
-        <input type="text" name="ds_${id}" required class="fi" placeholder="oferta-a">
+        <label>Parâmetro *</label>
+        <input type="text" name="ds_${id}" required class="fi" placeholder="ex: src=pv3">
       </div>
       <div class="fg fg-w">
         <label>% Tráfego *</label>
@@ -236,8 +230,6 @@ async function submitCreate(e) {
     const r = await api.post('/api/campaigns', {
       name: get('name'),
       domain_url: get('domain_url'),
-      utmify_dashboard_id: get('utmify_dashboard_id'),
-      utmify_dashboard_name: get('utmify_dashboard_name'),
       destinations
     });
     if (r.error) { toast(r.error, 'error'); btn.disabled = false; btn.textContent = 'Criar Campanha'; return; }
@@ -246,6 +238,122 @@ async function submitCreate(e) {
   } catch (err) {
     toast('Erro: ' + err.message, 'error');
     btn.disabled = false; btn.textContent = 'Criar Campanha';
+  }
+}
+
+// ─── Edit Campaign ────────────────────────────────────────────────────────────
+
+async function viewEdit(app, id) {
+  app.innerHTML = spinner();
+  try {
+    const camp = await api.get(`/api/campaigns/${id}`);
+    if (camp.error) { app.innerHTML = errorBlock(camp.error); return; }
+
+    _destId = 0;
+
+    app.innerHTML = `
+      <div class="page-header">
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="back-btn" onclick="navigate('/campaign/${id}')">←</button>
+          <h1>Editar Campanha</h1>
+        </div>
+      </div>
+      <form id="edit-form" class="form-card" onsubmit="submitEdit(event,${id})">
+
+        <fieldset class="fs">
+          <legend>Informações Gerais</legend>
+          <div class="fg">
+            <label>Nome da Campanha *</label>
+            <input name="name" required class="fi" value="${esc(camp.name)}" placeholder="Ex: Produto X — Split Teste">
+          </div>
+          <div class="fg">
+            <label>URL do Domínio Principal *</label>
+            <input name="domain_url" type="url" required class="fi" value="${esc(camp.domain_url)}" placeholder="https://seudominio.com">
+            <small>Onde o redirect gerado ficará hospedado</small>
+          </div>
+        </fieldset>
+
+        <fieldset class="fs">
+          <div class="fs-head">
+            <legend>Destinos</legend>
+            <button type="button" id="add-dest-btn" class="btn btn-ghost btn-sm" onclick="addDest()">+ Destino</button>
+          </div>
+          <div id="dests"></div>
+          <div class="weight-total">Total: <span id="wtotal" class="wval">0%</span></div>
+        </fieldset>
+
+        <div class="form-actions">
+          <a href="#/campaign/${id}" class="btn btn-ghost">Cancelar</a>
+          <button type="submit" class="btn btn-primary">Salvar Alterações</button>
+        </div>
+      </form>`;
+
+    for (const d of camp.destinations) addDestWithValues(d.url, d.src, d.weight);
+  } catch (e) {
+    app.innerHTML = errorBlock('Erro ao carregar campanha: ' + e.message);
+  }
+}
+
+function addDestWithValues(url, src, weight) {
+  const container = document.getElementById('dests');
+  const count = container.querySelectorAll('.dest-block').length;
+  if (count >= 4) return;
+
+  const id = _destId++;
+  const el = document.createElement('div');
+  el.className = 'dest-block';
+  el.dataset.did = id;
+  el.innerHTML = `
+    <div class="db-head">
+      <span class="db-label">Destino ${count + 1}</span>
+      <button type="button" class="btn-rm" onclick="removeDest(${id})">✕</button>
+    </div>
+    <div class="frow frow-dests">
+      <div class="fg fg-url">
+        <label>URL *</label>
+        <input type="url" name="du_${id}" required class="fi" value="${esc(url)}" placeholder="https://oferta.com/pagina">
+      </div>
+      <div class="fg fg-src">
+        <label>Parâmetro *</label>
+        <input type="text" name="ds_${id}" required class="fi" value="${esc(src)}" placeholder="ex: src=pv3">
+      </div>
+      <div class="fg fg-w">
+        <label>% Tráfego *</label>
+        <input type="number" name="dw_${id}" required min="0.1" max="100" step="0.1" value="${weight}" class="fi" oninput="updateWTotal()">
+      </div>
+    </div>`;
+  container.appendChild(el);
+  reindexDests();
+  updateWTotal();
+  updateAddBtn();
+}
+
+async function submitEdit(e, id) {
+  e.preventDefault();
+  const form = e.target;
+  const btn = form.querySelector('[type="submit"]');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+
+  const get = n => form.querySelector(`[name="${n}"]`)?.value || '';
+
+  const blocks = document.querySelectorAll('.dest-block');
+  const destinations = Array.from(blocks).map(b => {
+    const did = b.dataset.did;
+    return { url: get(`du_${did}`), src: get(`ds_${did}`), weight: parseFloat(get(`dw_${did}`)) || 0 };
+  });
+
+  try {
+    const r = await api.put(`/api/campaigns/${id}`, {
+      name: get('name'),
+      domain_url: get('domain_url'),
+      destinations
+    });
+    if (r.error) { toast(r.error, 'error'); btn.disabled = false; btn.textContent = 'Salvar Alterações'; return; }
+    toast('Campanha atualizada!', 'success');
+    navigate('/campaign/' + id);
+  } catch (err) {
+    toast('Erro: ' + err.message, 'error');
+    btn.disabled = false; btn.textContent = 'Salvar Alterações';
   }
 }
 
@@ -278,6 +386,7 @@ async function viewDashboard(app, id) {
         </div>
         <div class="dash-actions">
           <button class="btn btn-secondary" onclick="downloadRedirect(${id})">⬇ Gerar Redirect</button>
+          <button class="btn btn-ghost" onclick="navigate('/campaign/${id}/edit')">✎ Editar</button>
           <button class="btn btn-ghost" onclick="viewDashboard(document.getElementById('app'), ${id})">↺ Atualizar</button>
         </div>
       </div>
@@ -414,13 +523,13 @@ async function viewDashboard(app, id) {
       type: 'doughnut',
       data: {
         labels,
-        datasets: [{ data: stats.destinations.map(d => d.clicks), backgroundColor: COLORS, borderWidth: 2, borderColor: '#1e293b' }]
+        datasets: [{ data: stats.destinations.map(d => d.clicks), backgroundColor: COLORS, borderWidth: 2, borderColor: '#ffffff' }]
       },
       options: {
         responsive: true,
         cutout: '65%',
         plugins: {
-          legend: { position: 'bottom', labels: { color: '#94a3b8', padding: 14, font: { size: 12 } } }
+          legend: { position: 'bottom', labels: { color: '#64748b', padding: 14, font: { size: 12 } } }
         }
       }
     });
@@ -435,8 +544,8 @@ async function viewDashboard(app, id) {
         responsive: true,
         plugins: { legend: { display: false } },
         scales: {
-          y: { ticks: { color: '#94a3b8', callback: v => 'R$' + v }, grid: { color: '#1e293b' } },
-          x: { ticks: { color: '#94a3b8' }, grid: { display: false } }
+          y: { ticks: { color: '#64748b', callback: v => 'R$' + v }, grid: { color: '#f1f5f9' } },
+          x: { ticks: { color: '#64748b' }, grid: { display: false } }
         }
       }
     });
@@ -464,10 +573,10 @@ async function viewDashboard(app, id) {
       options: {
         responsive: true,
         interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { labels: { color: '#94a3b8', font: { size: 12 } } } },
+        plugins: { legend: { labels: { color: '#64748b', font: { size: 12 } } } },
         scales: {
-          y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
-          x: { ticks: { color: '#94a3b8', maxTicksLimit: 10 }, grid: { display: false } }
+          y: { ticks: { color: '#64748b' }, grid: { color: '#f1f5f9' } },
+          x: { ticks: { color: '#64748b', maxTicksLimit: 10 }, grid: { display: false } }
         }
       }
     });

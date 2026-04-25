@@ -12,6 +12,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+const SERVER_URL = 'https://metasplit.online';
+
+function sanitizeDomainUrl(url) {
+  if (!url) return url;
+  url = url.trim();
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  return url.replace(/\/+$/, '');
+}
+
 function getSetting(key) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : null;
@@ -89,7 +98,8 @@ app.get('/api/campaigns', (req, res) => {
 });
 
 app.post('/api/campaigns', (req, res) => {
-  const { name, utmify_dashboard_id, utmify_dashboard_name, domain_url, destinations } = req.body;
+  const { name, utmify_dashboard_id, utmify_dashboard_name, destinations } = req.body;
+  const domain_url = sanitizeDomainUrl(req.body.domain_url);
 
   if (!name || !domain_url || !Array.isArray(destinations) || !destinations.length)
     return res.status(400).json({ error: 'Campos obrigatórios: name, domain_url, destinations.' });
@@ -136,7 +146,8 @@ app.get('/api/campaigns/:id', (req, res) => {
 });
 
 app.put('/api/campaigns/:id', (req, res) => {
-  const { name, domain_url, destinations } = req.body;
+  const { name, destinations } = req.body;
+  const domain_url = sanitizeDomainUrl(req.body.domain_url);
 
   if (!name || !domain_url || !Array.isArray(destinations) || !destinations.length)
     return res.status(400).json({ error: 'Campos obrigatórios: name, domain_url, destinations.' });
@@ -207,7 +218,7 @@ app.get('/api/campaigns/:id/generate', (req, res) => {
     'SELECT id, url, src, weight FROM destinations WHERE campaign_id = ? ORDER BY sort_order'
   ).all(req.params.id);
 
-  const serverUrl  = getSetting('server_url') || `http://localhost:${PORT}`;
+  const serverUrl  = SERVER_URL.replace(/\/+$/, '');
   const destsJson  = JSON.stringify(dests);
   const campaignId = c.id;
 

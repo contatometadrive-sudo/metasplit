@@ -145,8 +145,8 @@ function viewCreate(app) {
         </div>
         <div class="fg">
           <label>URL do Domínio Principal *</label>
-          <input name="domain_url" type="url" required class="fi" placeholder="https://seudominio.com">
-          <small>Onde o redirect gerado ficará hospedado</small>
+          <input name="domain_url" type="text" required class="fi" placeholder="seudominio.com ou https://seudominio.com" onblur="sanitizeDomainInput(this)">
+          <small>Onde o redirect gerado ficará hospedado (https:// será adicionado automaticamente)</small>
         </div>
       </fieldset>
 
@@ -247,7 +247,7 @@ async function submitCreate(e) {
   try {
     const r = await api.post('/api/campaigns', {
       name: get('name'),
-      domain_url: get('domain_url'),
+      domain_url: normalizeDomainUrl(get('domain_url')),
       destinations
     });
     if (r.error) { toast(r.error, 'error'); btn.disabled = false; btn.textContent = 'Criar Campanha'; return; }
@@ -286,8 +286,8 @@ async function viewEdit(app, id) {
           </div>
           <div class="fg">
             <label>URL do Domínio Principal *</label>
-            <input name="domain_url" type="url" required class="fi" value="${esc(camp.domain_url)}" placeholder="https://seudominio.com">
-            <small>Onde o redirect gerado ficará hospedado</small>
+            <input name="domain_url" type="text" required class="fi" value="${esc(camp.domain_url)}" placeholder="seudominio.com ou https://seudominio.com" onblur="sanitizeDomainInput(this)">
+            <small>Onde o redirect gerado ficará hospedado (https:// será adicionado automaticamente)</small>
           </div>
         </fieldset>
 
@@ -363,7 +363,7 @@ async function submitEdit(e, id) {
   try {
     const r = await api.put(`/api/campaigns/${id}`, {
       name: get('name'),
-      domain_url: get('domain_url'),
+      domain_url: normalizeDomainUrl(get('domain_url')),
       destinations
     });
     if (r.error) { toast(r.error, 'error'); btn.disabled = false; btn.textContent = 'Salvar Alterações'; return; }
@@ -512,9 +512,7 @@ function funnelStep(label, count, total, color) {
 // ─── Webhook Info ─────────────────────────────────────────────────────────────
 
 async function viewWebhookInfo(app) {
-  const settings = await api.get('/api/settings');
-  const serverUrl = settings.server_url || 'http://localhost:3000';
-  const webhookUrl = `${serverUrl}/webhook/payt`;
+  const webhookUrl = 'https://metasplit.online/webhook/payt';
 
   const payloadExample = JSON.stringify({
     id: "TXN-123456",
@@ -728,15 +726,6 @@ async function viewSettings(app) {
           </div>
         </fieldset>
 
-        <fieldset class="fs">
-          <legend>Servidor SplitTrack</legend>
-          <div class="fg">
-            <label>URL Pública do Servidor</label>
-            <input type="url" name="server_url" value="${esc(s.server_url||'http://localhost:3000')}" class="fi" placeholder="https://splittrack.seudominio.com">
-            <small>Usado para montar o endpoint de tracking nos redirects gerados</small>
-          </div>
-        </fieldset>
-
         <div class="form-actions">
           <button type="submit" class="btn btn-primary">Salvar Configurações</button>
         </div>
@@ -791,6 +780,18 @@ function confirmReset(id, name) {
   api.del(`/api/campaigns/${id}/reset`)
     .then(() => { toast('Dados resetados com sucesso.', 'success'); viewCampaignList(document.getElementById('app')); })
     .catch(e => toast('Erro: ' + e.message, 'error'));
+}
+
+// ─── Domain URL sanitizer ─────────────────────────────────────────────────────
+
+function normalizeDomainUrl(val) {
+  val = (val || '').trim();
+  if (val && !/^https?:\/\//i.test(val)) val = 'https://' + val;
+  return val.replace(/\/+$/, '');
+}
+
+function sanitizeDomainInput(input) {
+  input.value = normalizeDomainUrl(input.value);
 }
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────

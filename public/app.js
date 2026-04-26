@@ -36,7 +36,7 @@ function handleRoute() {
   if (hash.startsWith('/campaign/')) {
     const parts = hash.split('/');
     if (parts[3] === 'edit') return viewEdit(app, parts[2]);
-    return viewDashboard(app, parts[2], parts[3] || 'all');
+    return viewDashboard(app, parts[2]);
   }
   app.innerHTML = `<div class="empty-state"><p>Página não encontrada.</p><a href="#/" class="btn btn-primary">Voltar</a></div>`;
 }
@@ -424,13 +424,21 @@ async function submitEdit(e, id) {
 
 // ─── Campaign Dashboard ───────────────────────────────────────────────────────
 
-async function viewDashboard(app, id, period) {
-  period = period || 'all';
+async function viewDashboard(app, id) {
+  id = +id;
+  drpEnsureInit(id);
+  const ds = _drp[id];
+  const startStr = ds.start ? drpDateStr(ds.start) : null;
+  const endStr   = ds.end   ? drpDateStr(ds.end)   : null;
+  const statsUrl = startStr && endStr
+    ? `/api/campaigns/${id}/stats?start=${startStr}&end=${endStr}`
+    : `/api/campaigns/${id}/stats`;
+
   app.innerHTML = spinner();
   try {
     const [camp, stats] = await Promise.all([
       api.get(`/api/campaigns/${id}`),
-      api.get(`/api/campaigns/${id}/stats?period=${period}`)
+      api.get(statsUrl)
     ]);
     if (camp.error) { app.innerHTML = errorBlock(camp.error); return; }
 
@@ -441,16 +449,6 @@ async function viewDashboard(app, id, period) {
 
     const COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444'];
 
-    const periodLabels = { all:'Tudo', today:'Hoje', yesterday:'Ontem', '7d':'7 dias', '30d':'30 dias' };
-    const periods = ['all','today','yesterday','7d','30d'];
-    const periodBar = `
-      <div class="period-bar">
-        ${periods.map(p => `
-          <button class="period-btn${p===period?' active':''}" onclick="viewDashboard(document.getElementById('app'),${id},'${p}')">${periodLabels[p]}</button>
-        `).join('')}
-      </div>`;
-
-    // best offer: winner by conversion rate (tie-break: revenue)
     const withSales = stats.destinations.filter(d => d.clicks > 0);
     const winnerId = withSales.length > 0
       ? withSales.reduce((best, d) =>
@@ -507,11 +505,18 @@ async function viewDashboard(app, id, period) {
           <button class="btn btn-secondary" onclick="downloadRedirect(${id})">⬇ Gerar Redirect</button>
           <button class="btn btn-ghost" onclick="navigate('/campaign/${id}/edit')">✎ Editar</button>
           <button class="btn btn-ghost" onclick="resetFromDashboard(${id},'${esc(camp.name)}')">⟳ Resetar</button>
-          <button class="btn btn-ghost" onclick="viewDashboard(document.getElementById('app'),${id},'${period}')">↺ Atualizar</button>
+          <button class="btn btn-ghost" onclick="viewDashboard(document.getElementById('app'),${id})">↺ Atualizar</button>
         </div>
       </div>
 
-      ${periodBar}
+      <div class="drp-wrap" id="drp-${id}">
+        <button class="drp-field" onclick="drpToggle(${id})">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span id="drp-label-${id}">Todo o período</span>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="drp-panel" id="drp-panel-${id}" style="display:none"></div>
+      </div>
 
       <div class="kpi-grid">
         ${kpi('👆', stats.totalClicks.toLocaleString('pt-BR'), 'Cliques Recebidos', 'primary')}
@@ -563,9 +568,177 @@ async function viewDashboard(app, id, period) {
           ⚠ ${stats.orphanSales.total} venda(s) com parâmetro não mapeado (${fmtBRL(stats.orphanSales.revenue)} aprovadas).
         </div>` : ''}`;
 
+    drpUpdateLabel(id);
+
   } catch (e) {
     app.innerHTML = errorBlock('Erro ao carregar dashboard: ' + e.message);
   }
+}
+
+// ─── Date Range Picker ────────────────────────────────────────────────────────
+
+const _drp = {};
+const _DRP_MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                     'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const _DRP_DOWS   = ['D','S','T','Q','Q','S','S'];
+
+function drpDateStr(d) {
+  const y  = d.getFullYear();
+  const m  = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+function drpFmt(d) {
+  return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric' });
+}
+
+function drpEnsureInit(id) {
+  if (!_drp[id]) {
+    const now = new Date();
+    _drp[id] = { start: null, end: null, phase: 'start', month: now.getMonth(), year: now.getFullYear() };
+  }
+}
+
+function drpUpdateLabel(id) {
+  const lbl = document.getElementById(`drp-label-${id}`);
+  if (!lbl) return;
+  const s = _drp[id];
+  lbl.textContent = s && s.start && s.end
+    ? `${drpFmt(s.start)} – ${drpFmt(s.end)}`
+    : 'Todo o período';
+}
+
+let _drpOutsideHandler = null;
+
+function drpToggle(id) {
+  const panel = document.getElementById(`drp-panel-${id}`);
+  if (!panel) return;
+  panel.style.display === 'none' ? drpOpen(id) : drpClose(id);
+}
+
+function drpOpen(id) {
+  drpEnsureInit(id);
+  const panel = document.getElementById(`drp-panel-${id}`);
+  if (!panel) return;
+  panel.style.display = '';
+  drpRender(id);
+  if (_drpOutsideHandler) document.removeEventListener('click', _drpOutsideHandler);
+  _drpOutsideHandler = e => {
+    const wrap = document.getElementById(`drp-${id}`);
+    if (wrap && !wrap.contains(e.target)) {
+      drpClose(id);
+      document.removeEventListener('click', _drpOutsideHandler);
+      _drpOutsideHandler = null;
+    }
+  };
+  setTimeout(() => document.addEventListener('click', _drpOutsideHandler), 0);
+}
+
+function drpClose(id) {
+  const panel = document.getElementById(`drp-panel-${id}`);
+  if (panel) panel.style.display = 'none';
+}
+
+function drpRender(id) {
+  const panel = document.getElementById(`drp-panel-${id}`);
+  if (!panel) return;
+  const s     = _drp[id];
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const first = new Date(s.year, s.month, 1);
+  const last  = new Date(s.year, s.month + 1, 0);
+
+  let cells = _DRP_DOWS.map(d => `<div class="drp-dow">${d}</div>`).join('');
+  for (let i = 0; i < first.getDay(); i++) cells += '<div></div>';
+  for (let d = 1; d <= last.getDate(); d++) {
+    const date = new Date(s.year, s.month, d);
+    const ts   = date.getTime();
+    let cls    = 'drp-day';
+    if (s.start && ts === s.start.getTime()) cls += ' drp-start';
+    if (s.end   && ts === s.end.getTime())   cls += ' drp-end';
+    if (s.start && s.end && date > s.start && date < s.end) cls += ' drp-in-range';
+    if (ts === today.getTime()) cls += ' drp-today';
+    cells += `<div class="${cls}" onclick="drpDayClick(${id},'${drpDateStr(date)}')">${d}</div>`;
+  }
+
+  const hintText = s.start && s.end
+    ? `${drpFmt(s.start)} → ${drpFmt(s.end)}`
+    : s.start ? 'Selecione a data final' : 'Selecione a data inicial';
+
+  panel.innerHTML = `
+    <div class="drp-inner">
+      <div class="drp-presets">
+        <button class="drp-preset" onclick="drpPreset(${id},'today')">Hoje</button>
+        <button class="drp-preset" onclick="drpPreset(${id},'yesterday')">Ontem</button>
+        <button class="drp-preset" onclick="drpPreset(${id},'7d')">7 dias</button>
+        <button class="drp-preset" onclick="drpPreset(${id},'30d')">30 dias</button>
+        <button class="drp-preset" onclick="drpPreset(${id},'all')">Tudo</button>
+      </div>
+      <div class="drp-cal">
+        <div class="drp-nav">
+          <button class="drp-nav-btn" onclick="drpPrev(${id})">&#8249;</button>
+          <span class="drp-month-lbl">${_DRP_MONTHS[s.month]} ${s.year}</span>
+          <button class="drp-nav-btn" onclick="drpNext(${id})">&#8250;</button>
+        </div>
+        <div class="drp-grid">${cells}</div>
+        <div class="drp-footer">
+          <span class="drp-hint">${hintText}</span>
+          ${s.start && s.end ? `<button class="drp-apply-btn" onclick="drpApply(${id})">Aplicar</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+function drpDayClick(id, dateStr) {
+  const s    = _drp[id];
+  const date = new Date(dateStr + 'T00:00:00');
+  if (s.phase === 'start' || (s.start && s.end)) {
+    s.start = date; s.end = null; s.phase = 'end';
+  } else {
+    if (date < s.start) { s.end = s.start; s.start = date; }
+    else s.end = date;
+    s.phase = 'start';
+  }
+  drpRender(id);
+}
+
+function drpPrev(id) {
+  const s = _drp[id];
+  if (s.month === 0) { s.month = 11; s.year--; } else s.month--;
+  drpRender(id);
+}
+
+function drpNext(id) {
+  const s = _drp[id];
+  if (s.month === 11) { s.month = 0; s.year++; } else s.month++;
+  drpRender(id);
+}
+
+function drpPreset(id, preset) {
+  const s     = _drp[id];
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (preset === 'today') {
+    s.start = new Date(today); s.end = new Date(today);
+  } else if (preset === 'yesterday') {
+    const y = new Date(today); y.setDate(y.getDate() - 1);
+    s.start = y; s.end = new Date(y.getTime());
+  } else if (preset === '7d') {
+    s.end = new Date(today);
+    s.start = new Date(today); s.start.setDate(s.start.getDate() - 6);
+  } else if (preset === '30d') {
+    s.end = new Date(today);
+    s.start = new Date(today); s.start.setDate(s.start.getDate() - 29);
+  } else {
+    s.start = null; s.end = null;
+  }
+  s.phase = 'start';
+  drpApply(id);
+}
+
+function drpApply(id) {
+  drpClose(id);
+  drpUpdateLabel(id);
+  viewDashboard(document.getElementById('app'), id);
 }
 
 function renderYFunnel(totalClicks, destinations, lostClicks, COLORS) {
@@ -927,7 +1100,7 @@ function confirmReset(id, name) {
 function resetFromDashboard(id, name) {
   if (!confirm(`Resetar dados de "${name}"?\n\nCliques e vendas serão apagados.\nAs configurações serão mantidas.`)) return;
   api.del(`/api/campaigns/${id}/reset`)
-    .then(() => { toast('Dados resetados.', 'success'); viewDashboard(document.getElementById('app'), id, 'all'); })
+    .then(() => { toast('Dados resetados.', 'success'); viewDashboard(document.getElementById('app'), id); })
     .catch(e => toast('Erro: ' + e.message, 'error'));
 }
 

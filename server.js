@@ -256,7 +256,8 @@ app.post('/api/track/:id', (req, res) => {
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
-function getPeriodClause(period) {
+function getPeriodClause(period, start, end) {
+  if (start && end) return `AND DATE(created_at) BETWEEN '${start}' AND '${end}'`;
   switch (period) {
     case 'today':     return "AND DATE(created_at) = DATE('now','localtime')";
     case 'yesterday': return "AND DATE(created_at) = DATE('now','localtime','-1 day')";
@@ -271,8 +272,10 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
   const c = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
 
-  const period = req.query.period || '30d';
-  const periodClause = getPeriodClause(period);
+  const period = req.query.period || 'all';
+  const start  = req.query.start  || null;
+  const end    = req.query.end    || null;
+  const periodClause = getPeriodClause(period, start, end);
 
   const destinations = db.prepare(
     'SELECT * FROM destinations WHERE campaign_id = ? ORDER BY sort_order'

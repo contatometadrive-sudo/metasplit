@@ -603,31 +603,138 @@ select.fi { appearance: none; background-image: url("data:image/svg+xml,%3Csvg x
 .src-tag.pos { background: rgba(16,185,129,.08); color: #059669; border-color: rgba(16,185,129,.2); }
 .src-tag.neg { background: rgba(239,68,68,.08); color: var(--red); border-color: rgba(239,68,68,.2); }
 
-/* ─── Period Filter ───────────────────────────────────────────────────────── */
-.period-bar {
-  display: flex;
-  gap: 6px;
+/* ─── Date Range Picker ───────────────────────────────────────────────────── */
+.drp-wrap {
+  position: relative;
+  display: inline-block;
   margin-bottom: 20px;
-  flex-wrap: wrap;
 }
-.period-btn {
-  padding: 5px 14px;
-  border-radius: 20px;
-  border: 1px solid var(--border);
+.drp-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
   background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
   color: var(--text2);
-  font-size: .78rem;
+  font-size: .83rem;
   font-weight: 500;
   cursor: pointer;
   transition: .15s;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
-.period-btn:hover { background: var(--bg3); color: var(--text); }
-.period-btn.active {
+.drp-field:hover { border-color: var(--accent); color: var(--text); }
+.drp-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 500;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--rl);
+  box-shadow: 0 8px 32px rgba(0,0,0,.14);
+  overflow: hidden;
+}
+.drp-inner { display: flex; }
+.drp-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border);
+  min-width: 100px;
+}
+.drp-preset {
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--text2);
+  font-size: .8rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: .12s;
+  white-space: nowrap;
+}
+.drp-preset:hover { background: var(--bg3); color: var(--text); }
+.drp-cal { padding: 12px 14px; min-width: 220px; }
+.drp-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.drp-month-lbl { font-size: .84rem; font-weight: 600; color: var(--text); }
+.drp-nav-btn {
+  width: 26px; height: 26px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text2);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: .12s;
+}
+.drp-nav-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.drp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.drp-dow {
+  text-align: center;
+  font-size: .65rem;
+  font-weight: 700;
+  color: var(--text3);
+  padding: 4px 0 6px;
+  text-transform: uppercase;
+}
+.drp-day {
+  text-align: center;
+  font-size: .8rem;
+  padding: 5px 3px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--text);
+  transition: background .1s, color .1s;
+  user-select: none;
+}
+.drp-day:hover { background: rgba(99,102,241,.12); color: var(--accent); }
+.drp-day.drp-in-range { background: rgba(99,102,241,.08); border-radius: 0; }
+.drp-day.drp-start { background: var(--accent); color: #fff; font-weight: 700; border-radius: 5px 0 0 5px; }
+.drp-day.drp-end   { background: var(--accent); color: #fff; font-weight: 700; border-radius: 0 5px 5px 0; }
+.drp-day.drp-start.drp-end { border-radius: 5px; }
+.drp-day.drp-today { font-weight: 700; color: var(--accent); }
+.drp-day.drp-start.drp-today,
+.drp-day.drp-end.drp-today  { color: #fff; }
+.drp-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.drp-hint { font-size: .74rem; color: var(--text3); }
+.drp-apply-btn {
+  padding: 5px 14px;
   background: var(--accent);
-  border-color: var(--accent);
   color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: .78rem;
   font-weight: 600;
+  cursor: pointer;
+  transition: .12s;
+  white-space: nowrap;
 }
+.drp-apply-btn:hover { background: var(--accent2); }
 
 /* ─── Best Offer Section ──────────────────────────────────────────────────── */
 .best-offer-grid {

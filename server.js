@@ -436,81 +436,98 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
 */
 
 function extractPaytFields(body) {
-  // ── src: tenta nested utm.src → utm_source/content → raiz V1 Flat; normaliza &/? iniciais
+  // ── src ──────────────────────────────────────────────────────────────────
+  // V1 Flat: chaves com pontos literais, ex: body["link.sources.src"]
+  // V1 Nested: body.utm.src
   const rawSrc =
-    body?.utm?.src          ||
-    body?.utm?.utm_source   ||
-    body?.utm?.utm_content  ||
-    body?.utms?.src         ||
-    body?.tracking?.src     ||
-    body?.src               ||
-    body?.utm_src           ||
-    body?.utm_source        ||
-    body?.utm_content       ||
+    body?.['link.sources.src']  ||  // V1 Flat (campo principal)
+    body?.utm?.src              ||  // V1 Nested
+    body?.utm?.utm_source       ||
+    body?.utm?.utm_content      ||
+    body?.utms?.src             ||
+    body?.tracking?.src         ||
+    body?.src                   ||
+    body?.utm_src               ||
+    body?.utm_source            ||
+    body?.utm_content           ||
     '';
   const src = String(rawSrc).replace(/^[&?\s]+/, '').trim();
   console.log('[Webhook] rawSrc:', JSON.stringify(rawSrc), '→ src:', src);
 
-  // ── status normalizado
+  // ── status ────────────────────────────────────────────────────────────────
   const rawStatus = (
-    body?.status ||
-    body?.event  ||
+    body?.status       ||
+    body?.event        ||
     body?.sale?.status ||
     ''
   ).toLowerCase();
 
   const STATUS_MAP = {
-    approved: 'approved', aprovada: 'approved', finalizada: 'approved',
-    'sale.approved': 'approved', paid: 'approved', complete: 'approved',
-    refunded: 'refunded', reembolsada: 'refunded', 'sale.refunded': 'refunded',
-    chargeback: 'chargeback', 'sale.chargeback': 'chargeback',
-    cancelled: 'cancelled', cancelada: 'cancelled', 'sale.cancelled': 'cancelled',
-    pending: 'pending', 'aguardando pagamento': 'pending', waiting: 'pending',
-    'sale.pending': 'pending',
+    // V1 Flat
+    approved: 'approved', paid: 'approved',
+    waiting_payment: 'pending', waiting: 'pending',
+    refunded: 'refunded', chargeback: 'chargeback',
+    cancelled: 'cancelled',
+    // V1 Nested / legado
+    aprovada: 'approved', finalizada: 'approved', complete: 'approved',
+    'sale.approved': 'approved',
+    reembolsada: 'refunded', 'sale.refunded': 'refunded',
+    'sale.chargeback': 'chargeback',
+    cancelada: 'cancelled', 'sale.cancelled': 'cancelled',
+    'aguardando pagamento': 'pending', 'sale.pending': 'pending',
   };
   const status = STATUS_MAP[rawStatus] || rawStatus || 'unknown';
 
-  // ── valor
-  const amount = parseFloat(
-    body?.total         ??
-    body?.amount        ??
-    body?.value         ??
-    body?.total_value   ??
-    body?.sale?.total   ??
-    0
-  );
+  // ── valor ─────────────────────────────────────────────────────────────────
+  // V1 Flat: "transaction.total_price" em centavos
+  // V1 Nested: body.total em reais
+  let amount;
+  if (body?.['transaction.total_price'] != null) {
+    amount = parseFloat(body['transaction.total_price']) / 100;
+  } else {
+    amount = parseFloat(
+      body?.total       ??
+      body?.amount      ??
+      body?.value       ??
+      body?.total_value ??
+      body?.sale?.total ??
+      0
+    );
+  }
 
-  // ── produto
+  // ── produto ───────────────────────────────────────────────────────────────
   const productName =
-    body?.product?.name ||
-    body?.offer?.name   ||
-    body?.product_name  ||
-    body?.item?.name    ||
+    body?.['product.name']  ||  // V1 Flat
+    body?.product?.name     ||  // V1 Nested
+    body?.offer?.name       ||
+    body?.product_name      ||
+    body?.item?.name        ||
     '';
 
-  // ── email
+  // ── email ─────────────────────────────────────────────────────────────────
   const customerEmail =
-    body?.customer?.email ||
-    body?.customer_email  ||
-    body?.email           ||
+    body?.['customer.email']  ||  // V1 Flat (caso exista)
+    body?.customer?.email     ||
+    body?.customer_email      ||
+    body?.email               ||
     '';
 
-  // ── ID externo
+  // ── ID externo ────────────────────────────────────────────────────────────
   const externalId = String(
-    body?.id             ||
-    body?.transaction_id ||
-    body?.sale?.id       ||
+    body?.transaction_id  ||  // V1 Flat
+    body?.id              ||  // V1 Nested
+    body?.sale?.id        ||
     ''
   );
 
-  // ── data da venda
+  // ── data da venda ─────────────────────────────────────────────────────────
   const saleDate =
-    body?.created_at      ||
-    body?.date            ||
-    body?.sale?.created_at||
+    body?.created_at       ||
+    body?.date             ||
+    body?.sale?.created_at ||
     new Date().toISOString();
 
-  // ── evento
+  // ── evento ────────────────────────────────────────────────────────────────
   const event = body?.event || body?.type || '';
 
   return { src, status, amount, productName, customerEmail, externalId, saleDate, event };

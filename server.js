@@ -519,6 +519,11 @@ function extractPaytFields(body) {
 app.post('/webhook/payt', (req, res) => {
   try {
     const body = req.body;
+    console.log('[Webhook] === HEADERS ===');
+    console.log(JSON.stringify(req.headers, null, 2));
+    console.log('[Webhook] === BODY COMPLETO ===');
+    console.log(JSON.stringify(body, null, 2));
+    console.log('[Webhook] === FIM BODY ===');
     const { src, status, amount, productName, customerEmail, externalId, saleDate, event } =
       extractPaytFields(body);
 

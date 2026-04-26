@@ -603,6 +603,76 @@ select.fi { appearance: none; background-image: url("data:image/svg+xml,%3Csvg x
 .src-tag.pos { background: rgba(16,185,129,.08); color: #059669; border-color: rgba(16,185,129,.2); }
 .src-tag.neg { background: rgba(239,68,68,.08); color: var(--red); border-color: rgba(239,68,68,.2); }
 
+/* ─── Period Filter ───────────────────────────────────────────────────────── */
+.period-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.period-btn {
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text2);
+  font-size: .78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: .15s;
+}
+.period-btn:hover { background: var(--bg3); color: var(--text); }
+.period-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ─── Best Offer Section ──────────────────────────────────────────────────── */
+.best-offer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+.best-offer-card {
+  border: 1px solid var(--border);
+  border-radius: var(--rl);
+  padding: 16px;
+  background: var(--bg3);
+  position: relative;
+  transition: .15s;
+}
+.best-offer-card.best-offer-winner {
+  border-color: #f59e0b;
+  background: rgba(245,158,11,.05);
+  box-shadow: 0 0 0 2px rgba(245,158,11,.2);
+}
+body.dark .best-offer-card.best-offer-winner {
+  background: rgba(245,158,11,.07);
+}
+.best-offer-trophy {
+  font-size: .72rem;
+  font-weight: 700;
+  color: #d97706;
+  margin-bottom: 10px;
+  letter-spacing: .03em;
+}
+.boc-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+}
+.boc-title {
+  font-size: .82rem; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+}
+.boc-stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.boc-stat { display: flex; flex-direction: column; }
+.boc-val  { font-size: 1rem; font-weight: 700; color: var(--text); }
+.boc-val.boc-win { color: #d97706; font-size: 1.15rem; }
+.boc-lbl  { font-size: .68rem; color: var(--text3); margin-top: 1px; }
+
 /* ─── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
   :root { --sidebar-w: 200px; }

@@ -1,7 +1,7 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, 'splittrack.db');
+const dbPath = process.env.DB_PATH || path.join(__dirname, '..', 'splittrack.db');
 const db = new DatabaseSync(dbPath);
 
 db.exec('PRAGMA journal_mode = WAL');

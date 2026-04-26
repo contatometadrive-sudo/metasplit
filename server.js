@@ -223,7 +223,7 @@ app.get('/api/campaigns/:id/generate', (req, res) => {
   const campaignId = c.id;
 
   // HTML mínimo — sem CSS, sem recursos externos, sem spinner. Redirect first, track after.
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title> </title></head><body><script>!function(){var D=${destsJson},T='${serverUrl}/api/track/${campaignId}',p={};location.search.slice(1).split('&').forEach(function(s){if(!s)return;var i=s.indexOf('=');try{p[decodeURIComponent(i<0?s:s.slice(0,i))]=decodeURIComponent(i<0?'':s.slice(i+1))}catch(e){}});var r=Math.random()*D.reduce(function(a,d){return a+d.weight},0),c=D[D.length-1];for(var i=0;i<D.length;i++){r-=D[i].weight;if(r<=0){c=D[i];break}}var eq=c.src.indexOf('='),pk=eq>=0?c.src.slice(0,eq):'src',pv=eq>=0?c.src.slice(eq+1):c.src,U=c.url;try{var u=new URL(c.url);for(var k in p){if(k!==pk)u.searchParams.set(k,p[k])}u.searchParams.set(pk,pv);U=u.toString()}catch(e){}window.location.replace(U);try{fetch(T,{method:'POST',headers:{'Content-Type':'application/json'},keepalive:!0,body:JSON.stringify({destination_id:c.id,params:p,referrer:document.referrer||''})})}catch(e){}}();<\/script></body></html>`;
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title> </title></head><body><script>!function(){var D=${destsJson},T='${serverUrl}/api/track/${campaignId}',p={};location.search.slice(1).split('&').forEach(function(s){if(!s)return;var i=s.indexOf('=');try{p[decodeURIComponent(i<0?s:s.slice(0,i))]=decodeURIComponent(i<0?'':s.slice(i+1))}catch(e){}});function wrand(D){var t=D.reduce(function(s,d){return s+d.weight},0),r=Math.random()*t;for(var i=0;i<D.length-1;i++){if((r-=D[i].weight)<0)return D[i];}return D[D.length-1];}var c=wrand(D);var eq=c.src.indexOf('='),pk=eq>=0?c.src.slice(0,eq):'src',pv=eq>=0?c.src.slice(eq+1):c.src,U=c.url;try{var u=new URL(c.url);for(var k in p){if(k!==pk)u.searchParams.set(k,p[k])}u.searchParams.set(pk,pv);U=u.toString()}catch(e){}window.location.replace(U);try{fetch(T,{method:'POST',headers:{'Content-Type':'application/json'},keepalive:!0,body:JSON.stringify({destination_id:c.id,params:p,referrer:document.referrer||''})})}catch(e){}}();<\/script></body></html>`;
 
   res.setHeader('Content-Disposition', 'attachment; filename="index.html"');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -256,21 +256,35 @@ app.post('/api/track/:id', (req, res) => {
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
+function getPeriodClause(period) {
+  switch (period) {
+    case 'today':     return "AND DATE(created_at) = DATE('now','localtime')";
+    case 'yesterday': return "AND DATE(created_at) = DATE('now','localtime','-1 day')";
+    case '7d':        return "AND created_at >= DATE('now','localtime','-6 days')";
+    case '30d':       return "AND created_at >= DATE('now','localtime','-29 days')";
+    case 'all':
+    default:          return '';
+  }
+}
+
 app.get('/api/campaigns/:id/stats', async (req, res) => {
   const c = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
+
+  const period = req.query.period || '30d';
+  const periodClause = getPeriodClause(period);
 
   const destinations = db.prepare(
     'SELECT * FROM destinations WHERE campaign_id = ? ORDER BY sort_order'
   ).all(req.params.id);
 
   const totalClicks = db.prepare(
-    'SELECT COUNT(*) AS n FROM clicks WHERE campaign_id = ?'
+    `SELECT COUNT(*) AS n FROM clicks WHERE campaign_id = ? ${periodClause}`
   ).get(req.params.id).n;
 
   const byDest = db.prepare(`
     SELECT destination_id, COUNT(*) AS n
-    FROM clicks WHERE campaign_id = ?
+    FROM clicks WHERE campaign_id = ? ${periodClause}
     GROUP BY destination_id
   `).all(req.params.id);
   const clicksMap = Object.fromEntries(byDest.map(r => [r.destination_id, r.n]));
@@ -307,7 +321,7 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
       SUM(CASE WHEN status = 'chargeback' THEN 1 ELSE 0 END)     AS chargebacks,
       SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END)      AS pending
     FROM sales
-    WHERE campaign_id = ?
+    WHERE campaign_id = ? ${periodClause}
     GROUP BY destination_id
   `).all(req.params.id);
   const localSalesMap = Object.fromEntries(
@@ -320,7 +334,7 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
       SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) AS revenue,
       COUNT(*) AS total
     FROM sales
-    WHERE campaign_id = ? AND destination_id IS NULL
+    WHERE campaign_id = ? AND destination_id IS NULL ${periodClause}
   `).get(req.params.id);
 
   const destStats = destinations.map(d => {
@@ -355,11 +369,11 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
   // Resumo de vendas por status (todos os destinos desta campanha)
   const salesSummary = db.prepare(`
     SELECT status, COUNT(*) AS count, SUM(amount) AS total
-    FROM sales WHERE campaign_id = ?
+    FROM sales WHERE campaign_id = ? ${periodClause}
     GROUP BY status
   `).all(req.params.id);
 
-  res.json({
+  res.json({ period,
     campaign: c,
     totalClicks,
     lostClicks: totalClicks - totalDestClicks,
@@ -422,7 +436,7 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
 */
 
 function extractPaytFields(body) {
-  // ── src: tenta nested utm.src → utm.utm_content → raiz; normaliza &/? iniciais
+  // ── src: tenta nested utm.src → utm_source/content → raiz V1 Flat; normaliza &/? iniciais
   const rawSrc =
     body?.utm?.src          ||
     body?.utm?.utm_source   ||
@@ -430,10 +444,12 @@ function extractPaytFields(body) {
     body?.utms?.src         ||
     body?.tracking?.src     ||
     body?.src               ||
+    body?.utm_src           ||
     body?.utm_source        ||
     body?.utm_content       ||
     '';
   const src = String(rawSrc).replace(/^[&?\s]+/, '').trim();
+  console.log('[Webhook] rawSrc:', JSON.stringify(rawSrc), '→ src:', src);
 
   // ── status normalizado
   const rawStatus = (
@@ -511,9 +527,13 @@ app.post('/webhook/payt', (req, res) => {
     let campaignId    = null;
 
     if (src) {
+      // srcValue: se src vier como "pv3" (sem =), compara direto; se vier como "src=pv3" extrai "pv3"
+      const srcValue = src.includes('=') ? src.split('=').slice(1).join('=') : src;
+      console.log('[Webhook] buscando dest: src=%s srcValue=%s', src, srcValue);
       const dest = db.prepare(
-        "SELECT * FROM destinations WHERE src = ? OR (src LIKE '%=%' AND SUBSTR(src, INSTR(src,'=')+1) = ?)"
-      ).get(src, src);
+        "SELECT * FROM destinations WHERE src = ? OR src = ? OR (src LIKE '%=%' AND SUBSTR(src, INSTR(src,'=')+1) = ?)"
+      ).get(src, srcValue, srcValue);
+      console.log('[Webhook] dest encontrado:', dest ? `id=${dest.id} campaign=${dest.campaign_id}` : 'nenhum');
       if (dest) {
         destinationId = dest.id;
         campaignId    = dest.campaign_id;

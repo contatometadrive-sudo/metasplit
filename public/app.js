@@ -36,7 +36,7 @@ function handleRoute() {
   if (hash.startsWith('/campaign/')) {
     const parts = hash.split('/');
     if (parts[3] === 'edit') return viewEdit(app, parts[2]);
-    return viewDashboard(app, parts[2]);
+    return viewDashboard(app, parts[2], parts[3] || 'all');
   }
   app.innerHTML = `<div class="empty-state"><p>Página não encontrada.</p><a href="#/" class="btn btn-primary">Voltar</a></div>`;
 }
@@ -424,12 +424,13 @@ async function submitEdit(e, id) {
 
 // ─── Campaign Dashboard ───────────────────────────────────────────────────────
 
-async function viewDashboard(app, id) {
+async function viewDashboard(app, id, period) {
+  period = period || 'all';
   app.innerHTML = spinner();
   try {
     const [camp, stats] = await Promise.all([
       api.get(`/api/campaigns/${id}`),
-      api.get(`/api/campaigns/${id}/stats`)
+      api.get(`/api/campaigns/${id}/stats?period=${period}`)
     ]);
     if (camp.error) { app.innerHTML = errorBlock(camp.error); return; }
 
@@ -439,6 +440,59 @@ async function viewDashboard(app, id) {
       ? ((totalSales / stats.totalClicks) * 100).toFixed(2) : '0.00';
 
     const COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444'];
+
+    const periodLabels = { all:'Tudo', today:'Hoje', yesterday:'Ontem', '7d':'7 dias', '30d':'30 dias' };
+    const periods = ['all','today','yesterday','7d','30d'];
+    const periodBar = `
+      <div class="period-bar">
+        ${periods.map(p => `
+          <button class="period-btn${p===period?' active':''}" onclick="viewDashboard(document.getElementById('app'),${id},'${p}')">${periodLabels[p]}</button>
+        `).join('')}
+      </div>`;
+
+    // best offer: winner by conversion rate (tie-break: revenue)
+    const withSales = stats.destinations.filter(d => d.clicks > 0);
+    const winnerId = withSales.length > 0
+      ? withSales.reduce((best, d) =>
+          d.conversion > best.conversion || (d.conversion === best.conversion && d.revenue > best.revenue) ? d : best
+        , withSales[0]).id
+      : null;
+
+    const bestOfferSection = stats.destinations.some(d => d.clicks > 0) ? `
+      <div class="section-card">
+        <h3>Qual oferta converte mais?</h3>
+        <div class="best-offer-grid">
+          ${stats.destinations.map((d, i) => {
+            const isWinner = d.id === winnerId;
+            return `
+              <div class="best-offer-card${isWinner ? ' best-offer-winner' : ''}">
+                ${isWinner ? '<div class="best-offer-trophy">🏆 Melhor oferta</div>' : ''}
+                <div class="boc-header">
+                  <span class="dbadge" style="background:${COLORS[i]}">${i+1}</span>
+                  <div class="boc-title">${truncUrl(d.url)}</div>
+                </div>
+                <div class="boc-stats">
+                  <div class="boc-stat">
+                    <div class="boc-val${isWinner?' boc-win':''}">${d.conversion}%</div>
+                    <div class="boc-lbl">Conversão</div>
+                  </div>
+                  <div class="boc-stat">
+                    <div class="boc-val">${d.clicks.toLocaleString('pt-BR')}</div>
+                    <div class="boc-lbl">Cliques</div>
+                  </div>
+                  <div class="boc-stat">
+                    <div class="boc-val">${d.sales}</div>
+                    <div class="boc-lbl">Vendas</div>
+                  </div>
+                  <div class="boc-stat">
+                    <div class="boc-val">${fmtBRL(d.revenue)}</div>
+                    <div class="boc-lbl">Faturamento</div>
+                  </div>
+                </div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>` : '';
 
     app.innerHTML = `
       <div class="dash-header">
@@ -453,9 +507,11 @@ async function viewDashboard(app, id) {
           <button class="btn btn-secondary" onclick="downloadRedirect(${id})">⬇ Gerar Redirect</button>
           <button class="btn btn-ghost" onclick="navigate('/campaign/${id}/edit')">✎ Editar</button>
           <button class="btn btn-ghost" onclick="resetFromDashboard(${id},'${esc(camp.name)}')">⟳ Resetar</button>
-          <button class="btn btn-ghost" onclick="viewDashboard(document.getElementById('app'), ${id})">↺ Atualizar</button>
+          <button class="btn btn-ghost" onclick="viewDashboard(document.getElementById('app'),${id},'${period}')">↺ Atualizar</button>
         </div>
       </div>
+
+      ${periodBar}
 
       <div class="kpi-grid">
         ${kpi('👆', stats.totalClicks.toLocaleString('pt-BR'), 'Cliques Recebidos', 'primary')}
@@ -500,11 +556,12 @@ async function viewDashboard(app, id) {
         ${renderYFunnel(stats.totalClicks, stats.destinations, stats.lostClicks, COLORS)}
       </div>
 
+      ${bestOfferSection}
+
       ${stats.orphanSales?.total > 0 ? `
         <div class="alert alert-warn">
           ⚠ ${stats.orphanSales.total} venda(s) com parâmetro não mapeado (${fmtBRL(stats.orphanSales.revenue)} aprovadas).
         </div>` : ''}`;
-    // no chart.js charts needed
 
   } catch (e) {
     app.innerHTML = errorBlock('Erro ao carregar dashboard: ' + e.message);
@@ -521,7 +578,7 @@ function renderYFunnel(totalClicks, destinations, lostClicks, COLORS) {
   const DEST_GAP = 22;
   const totalDestArea = n * DEST_H + (n - 1) * DEST_GAP;
   const padY    = 24;
-  const lostH   = lostClicks > 0 ? 50 : 0;
+  const lostH   = lostClicks > 0 ? 62 : 0;
   const H       = Math.max(160, totalDestArea) + padY * 2 + lostH;
   const W       = 560;
 
@@ -562,15 +619,22 @@ function renderYFunnel(totalClicks, destinations, lostClicks, COLORS) {
 
   const lostY = padY + Math.max(160, totalDestArea) + 14;
   const lostPct = ((lostClicks / totalClicks) * 100).toFixed(1);
+  const lostBarW = Math.max(6, Math.round((lostClicks / totalClicks) * 18));
+  const lostMidY = lostY + 18;
   const lostBlock = lostClicks > 0 ? `
-    <rect x="${srcX}" y="${lostY}" width="${destX+destW}" height="32" rx="6"
-      fill="#ef4444" fill-opacity=".05" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"
+    <path pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"
+      d="M${srcX+srcW} ${srcMidY} C${forkX} ${srcMidY},${forkX} ${lostMidY},${destX} ${lostMidY}"
+      stroke="#ef4444" stroke-width="${lostBarW}" fill="none" stroke-linecap="round" stroke-dasharray="4,3"
+      style="animation:drawPath .7s .5s ease forwards"/>
+    <rect x="${destX}" y="${lostY}" width="${destW}" height="36" rx="6"
+      fill="#ef4444" fill-opacity=".07" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,3"
       style="animation:fadeInSvg .4s .6s ease forwards;opacity:0"/>
-    <text x="${(destX+destW)/2}" y="${lostY+20}" text-anchor="middle"
-      font-size="11" fill="#ef4444"
-      style="animation:fadeInSvg .4s .6s ease forwards;opacity:0">
-      ⚠ Não rastreados: ${lostClicks.toLocaleString('pt-BR')} (${lostPct}%)
-    </text>` : '';
+    <text x="${destX+destW/2}" y="${lostY+14}" text-anchor="middle"
+      font-size="10" font-weight="700" fill="#ef4444"
+      style="animation:fadeInSvg .4s .6s ease forwards;opacity:0">NÃO RASTREADOS</text>
+    <text x="${destX+destW/2}" y="${lostY+29}" text-anchor="middle"
+      font-size="11" fill="#ef4444" opacity=".8"
+      style="animation:fadeInSvg .4s .6s ease forwards;opacity:0">${lostClicks.toLocaleString('pt-BR')} cliques · ${lostPct}%</text>` : '';
 
   return `
     <div class="yfunnel-wrap">
@@ -863,7 +927,7 @@ function confirmReset(id, name) {
 function resetFromDashboard(id, name) {
   if (!confirm(`Resetar dados de "${name}"?\n\nCliques e vendas serão apagados.\nAs configurações serão mantidas.`)) return;
   api.del(`/api/campaigns/${id}/reset`)
-    .then(() => { toast('Dados resetados.', 'success'); viewDashboard(document.getElementById('app'), id); })
+    .then(() => { toast('Dados resetados.', 'success'); viewDashboard(document.getElementById('app'), id, 'all'); })
     .catch(e => toast('Erro: ' + e.message, 'error'));
 }
 

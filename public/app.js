@@ -42,30 +42,77 @@ function handleRoute() {
 }
 
 window.addEventListener('hashchange', handleRoute);
-document.addEventListener('DOMContentLoaded', handleRoute);
+document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
+  handleRoute();
+});
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+
+function initTheme() {
+  if (localStorage.getItem('theme') === 'dark') applyDark();
+}
+
+function applyDark() {
+  document.body.classList.add('dark');
+  const sun  = document.getElementById('theme-icon-sun');
+  const moon = document.getElementById('theme-icon-moon');
+  const lbl  = document.getElementById('theme-label');
+  if (sun)  sun.style.display  = 'none';
+  if (moon) moon.style.display = '';
+  if (lbl)  lbl.textContent    = 'Tema claro';
+}
+
+function applyLight() {
+  document.body.classList.remove('dark');
+  const sun  = document.getElementById('theme-icon-sun');
+  const moon = document.getElementById('theme-icon-moon');
+  const lbl  = document.getElementById('theme-label');
+  if (sun)  sun.style.display  = '';
+  if (moon) moon.style.display = 'none';
+  if (lbl)  lbl.textContent    = 'Tema escuro';
+}
+
+function toggleTheme() {
+  if (document.body.classList.contains('dark')) {
+    applyLight();
+    localStorage.setItem('theme', 'light');
+  } else {
+    applyDark();
+    localStorage.setItem('theme', 'dark');
+  }
+}
 
 // ─── Campaign List ────────────────────────────────────────────────────────────
+
+const HERO_HTML = `
+  <div class="homepage-hero">
+    <div class="hero-icon">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    </div>
+    <h1 class="hero-title">MetaSplit</h1>
+    <p class="hero-tagline">Teste e compare suas ofertas com split de tráfego inteligente</p>
+  </div>`;
 
 async function viewCampaignList(app) {
   app.innerHTML = spinner();
   try {
     const campaigns = await api.get('/api/campaigns');
     if (!campaigns.length) {
-      app.innerHTML = `
+      app.innerHTML = HERO_HTML + `
         <div class="empty-state">
           <div class="empty-icon">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
           </div>
           <h2>Nenhuma campanha ainda</h2>
           <p>Crie seu primeiro split test e comece a otimizar</p>
-          <a href="#/create" class="btn btn-primary">Criar Campanha</a>
+          <a href="#/create" class="btn btn-primary">+ Nova Campanha</a>
         </div>`;
       return;
     }
-
-    app.innerHTML = `
+    app.innerHTML = HERO_HTML + `
       <div class="page-header">
-        <h1>Campanhas</h1>
+        <h2>Campanhas</h2>
         <a href="#/create" class="btn btn-primary">+ Nova Campanha</a>
       </div>
       <div class="campaign-grid">
@@ -405,6 +452,7 @@ async function viewDashboard(app, id) {
         <div class="dash-actions">
           <button class="btn btn-secondary" onclick="downloadRedirect(${id})">⬇ Gerar Redirect</button>
           <button class="btn btn-ghost" onclick="navigate('/campaign/${id}/edit')">✎ Editar</button>
+          <button class="btn btn-ghost" onclick="resetFromDashboard(${id},'${esc(camp.name)}')">⟳ Resetar</button>
           <button class="btn btn-ghost" onclick="viewDashboard(document.getElementById('app'), ${id})">↺ Atualizar</button>
         </div>
       </div>
@@ -447,65 +495,95 @@ async function viewDashboard(app, id) {
           </div>`).join('')}
       </div>
 
-      <div class="charts-row">
-        <div class="section-card" style="margin-bottom:0">
-          <h3>Funil de Tráfego</h3>
-          <div class="funnel">
-            ${funnelStep('Total de Cliques', stats.totalClicks, stats.totalClicks, '#64748b')}
-            ${stats.destinations.map((d, i) =>
-              funnelStep(`Oferta ${i+1} — ${esc(d.src)}`, d.clicks, stats.totalClicks, COLORS[i])
-            ).join('')}
-            ${stats.lostClicks > 0
-              ? funnelStep('Não rastreados ⚠', stats.lostClicks, stats.totalClicks, '#ef4444')
-              : ''}
-          </div>
-        </div>
-        <div class="chart-card">
-          <h3>Distribuição de Cliques</h3>
-          <canvas id="ch-donut" height="260"></canvas>
-        </div>
+      <div class="section-card">
+        <h3>Funil de Distribuição</h3>
+        ${renderYFunnel(stats.totalClicks, stats.destinations, stats.lostClicks, COLORS)}
       </div>
 
       ${stats.orphanSales?.total > 0 ? `
         <div class="alert alert-warn">
           ⚠ ${stats.orphanSales.total} venda(s) com parâmetro não mapeado (${fmtBRL(stats.orphanSales.revenue)} aprovadas).
         </div>` : ''}`;
-
-    if (stats.totalClicks > 0) {
-      const labels = stats.destinations.map((d, i) => `Oferta ${i+1} (${d.src})`);
-      _charts.donut = new Chart(document.getElementById('ch-donut'), {
-        type: 'doughnut',
-        data: {
-          labels,
-          datasets: [{ data: stats.destinations.map(d => d.clicks), backgroundColor: COLORS, borderWidth: 2, borderColor: '#ffffff' }]
-        },
-        options: {
-          responsive: true,
-          cutout: '65%',
-          plugins: {
-            legend: { position: 'bottom', labels: { color: '#64748b', padding: 14, font: { size: 12 } } }
-          }
-        }
-      });
-    } else {
-      const canvas = document.getElementById('ch-donut');
-      if (canvas) canvas.parentElement.innerHTML += '<p style="text-align:center;color:var(--text3);font-size:.82rem;margin-top:12px">Sem cliques ainda</p>';
-    }
+    // no chart.js charts needed
 
   } catch (e) {
     app.innerHTML = errorBlock('Erro ao carregar dashboard: ' + e.message);
   }
 }
 
-function funnelStep(label, count, total, color) {
-  const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
-  const width = Math.max(parseFloat(pct), 6);
+function renderYFunnel(totalClicks, destinations, lostClicks, COLORS) {
+  if (totalClicks === 0) {
+    return '<p style="text-align:center;color:var(--text3);padding:32px 0;font-size:.84rem">Sem cliques ainda para exibir o funil.</p>';
+  }
+
+  const n       = destinations.length;
+  const DEST_H  = 80;
+  const DEST_GAP = 22;
+  const totalDestArea = n * DEST_H + (n - 1) * DEST_GAP;
+  const padY    = 24;
+  const lostH   = lostClicks > 0 ? 50 : 0;
+  const H       = Math.max(160, totalDestArea) + padY * 2 + lostH;
+  const W       = 560;
+
+  const srcX = 0, srcW = 152, srcH = 80;
+  const srcY = padY + (Math.max(160, totalDestArea) - srcH) / 2;
+  const srcMidY = srcY + srcH / 2;
+
+  const destX = 360, destW = 186;
+  const destStartY = padY + (Math.max(160, totalDestArea) - totalDestArea) / 2;
+  const forkX = srcX + srcW + 56;
+
+  const destItems = destinations.map((d, i) => {
+    const dy      = destStartY + i * (DEST_H + DEST_GAP);
+    const dMidY   = dy + DEST_H / 2;
+    const pct     = ((d.clicks / totalClicks) * 100).toFixed(1);
+    const sw      = Math.max(3, Math.round((d.clicks / totalClicks) * 18));
+    const c       = COLORS[i];
+    const delay   = (0.1 + i * 0.18).toFixed(2);
+    const srcVal  = d.src.includes('=') ? d.src.split('=')[1] : d.src;
+    return `
+      <path pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"
+        d="M${srcX+srcW} ${srcMidY} C${forkX} ${srcMidY},${forkX} ${dMidY},${destX} ${dMidY}"
+        stroke="${c}" stroke-width="${sw}" fill="none" stroke-linecap="round"
+        style="animation:drawPath .7s ${delay}s ease forwards"/>
+      <rect x="${destX}" y="${dy}" width="${destW}" height="${DEST_H}" rx="8"
+        fill="${c}" fill-opacity=".07" stroke="${c}" stroke-width="1.5"
+        style="animation:fadeInSvg .4s ${delay}s ease forwards;opacity:0"/>
+      <text x="${destX+destW/2}" y="${dy+16}" text-anchor="middle"
+        font-size="10" font-weight="700" letter-spacing=".06em" fill="${c}"
+        style="animation:fadeInSvg .4s ${delay}s ease forwards;opacity:0">OFERTA ${i+1}  ·  ${esc(srcVal).toUpperCase()}</text>
+      <text x="${destX+destW/2}" y="${dy+46}" text-anchor="middle"
+        font-size="28" font-weight="800" fill="currentColor"
+        style="animation:fadeInSvg .4s ${delay}s ease forwards;opacity:0">${pct}%</text>
+      <text x="${destX+destW/2}" y="${dy+65}" text-anchor="middle"
+        font-size="11" fill="currentColor" opacity=".55"
+        style="animation:fadeInSvg .4s ${delay}s ease forwards;opacity:0">${d.clicks.toLocaleString('pt-BR')} cliques</text>`;
+  }).join('');
+
+  const lostY = padY + Math.max(160, totalDestArea) + 14;
+  const lostPct = ((lostClicks / totalClicks) * 100).toFixed(1);
+  const lostBlock = lostClicks > 0 ? `
+    <rect x="${srcX}" y="${lostY}" width="${destX+destW}" height="32" rx="6"
+      fill="#ef4444" fill-opacity=".05" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"
+      style="animation:fadeInSvg .4s .6s ease forwards;opacity:0"/>
+    <text x="${(destX+destW)/2}" y="${lostY+20}" text-anchor="middle"
+      font-size="11" fill="#ef4444"
+      style="animation:fadeInSvg .4s .6s ease forwards;opacity:0">
+      ⚠ Não rastreados: ${lostClicks.toLocaleString('pt-BR')} (${lostPct}%)
+    </text>` : '';
+
   return `
-    <div class="funnel-row">
-      <div class="funnel-bar" style="width:${width}%;background:${color}18;border-left:3px solid ${color}">
-        <span class="funnel-lbl">${label}</span>
-        <span class="funnel-cnt">${count.toLocaleString('pt-BR')} <small>(${pct}%)</small></span>
-      </div>
+    <div class="yfunnel-wrap">
+      <svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:560px;overflow:visible">
+        <rect x="${srcX}" y="${srcY}" width="${srcW}" height="${srcH}" rx="8"
+          fill="var(--accent)" fill-opacity=".07" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="${srcX+srcW/2}" y="${srcY+20}" text-anchor="middle"
+          font-size="10" font-weight="700" letter-spacing=".06em" fill="var(--accent)">TOTAL CLIQUES</text>
+        <text x="${srcX+srcW/2}" y="${srcY+54}" text-anchor="middle"
+          font-size="30" font-weight="800" fill="currentColor">${totalClicks.toLocaleString('pt-BR')}</text>
+        ${destItems}
+        ${lostBlock}
+      </svg>
     </div>`;
 }
 
@@ -779,6 +857,13 @@ function confirmReset(id, name) {
   if (!confirm(`Resetar dados de "${name}"?\n\nIsso zerará todos os cliques e vendas.\nAs configurações da campanha serão mantidas.`)) return;
   api.del(`/api/campaigns/${id}/reset`)
     .then(() => { toast('Dados resetados com sucesso.', 'success'); viewCampaignList(document.getElementById('app')); })
+    .catch(e => toast('Erro: ' + e.message, 'error'));
+}
+
+function resetFromDashboard(id, name) {
+  if (!confirm(`Resetar dados de "${name}"?\n\nCliques e vendas serão apagados.\nAs configurações serão mantidas.`)) return;
+  api.del(`/api/campaigns/${id}/reset`)
+    .then(() => { toast('Dados resetados.', 'success'); viewDashboard(document.getElementById('app'), id); })
     .catch(e => toast('Erro: ' + e.message, 'error'));
 }
 

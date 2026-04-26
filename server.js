@@ -422,8 +422,8 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
 */
 
 function extractPaytFields(body) {
-  // ── src: tenta nested utm.src → utm.utm_content → raiz
-  const src =
+  // ── src: tenta nested utm.src → utm.utm_content → raiz; normaliza &/? iniciais
+  const rawSrc =
     body?.utm?.src          ||
     body?.utm?.utm_source   ||
     body?.utm?.utm_content  ||
@@ -433,6 +433,7 @@ function extractPaytFields(body) {
     body?.utm_source        ||
     body?.utm_content       ||
     '';
+  const src = String(rawSrc).replace(/^[&?\s]+/, '').trim();
 
   // ── status normalizado
   const rawStatus = (

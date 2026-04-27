@@ -197,6 +197,11 @@ function viewCreate(app) {
           <input name="domain_url" type="text" required class="fi" placeholder="seudominio.com ou https://seudominio.com" onblur="sanitizeDomainInput(this)">
           <small>Onde o redirect gerado ficará hospedado (https:// será adicionado automaticamente)</small>
         </div>
+        <div class="fg">
+          <label>Produto (opcional)</label>
+          <input name="product_filter" type="text" class="fi" placeholder="Ex: Curso Premium">
+          <small>Se preenchido, o webhook só registra vendas cujo nome do produto contenha este texto (case-insensitive). Útil quando um mesmo src vende mais de um produto.</small>
+        </div>
       </fieldset>
 
       <fieldset class="fs">
@@ -297,6 +302,7 @@ async function submitCreate(e) {
     const r = await api.post('/api/campaigns', {
       name: get('name'),
       domain_url: normalizeDomainUrl(get('domain_url')),
+      product_filter: get('product_filter'),
       destinations
     });
     if (r.error) { toast(r.error, 'error'); btn.disabled = false; btn.textContent = 'Criar Campanha'; return; }
@@ -337,6 +343,11 @@ async function viewEdit(app, id) {
             <label>URL do Domínio Principal *</label>
             <input name="domain_url" type="text" required class="fi" value="${esc(camp.domain_url)}" placeholder="seudominio.com ou https://seudominio.com" onblur="sanitizeDomainInput(this)">
             <small>Onde o redirect gerado ficará hospedado (https:// será adicionado automaticamente)</small>
+          </div>
+          <div class="fg">
+            <label>Produto (opcional)</label>
+            <input name="product_filter" type="text" class="fi" value="${esc(camp.product_filter || '')}" placeholder="Ex: Curso Premium">
+            <small>Se preenchido, o webhook só registra vendas cujo nome do produto contenha este texto (case-insensitive). Útil quando um mesmo src vende mais de um produto.</small>
           </div>
         </fieldset>
 
@@ -413,6 +424,7 @@ async function submitEdit(e, id) {
     const r = await api.put(`/api/campaigns/${id}`, {
       name: get('name'),
       domain_url: normalizeDomainUrl(get('domain_url')),
+      product_filter: get('product_filter'),
       destinations
     });
     if (r.error) { toast(r.error, 'error'); btn.disabled = false; btn.textContent = 'Salvar Alterações'; return; }
@@ -501,6 +513,11 @@ async function viewDashboard(app, id) {
           <div>
             <h1>${esc(camp.name)}</h1>
             <span class="dash-domain">🌐 ${esc(camp.domain_url)}</span>
+            ${camp.product_filter ? `
+              <span class="dash-product-filter" title="Webhook só registra vendas cujo product.name contenha este texto">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                Produto: <strong>${esc(camp.product_filter)}</strong>
+              </span>` : ''}
           </div>
         </div>
         <div class="dash-actions">

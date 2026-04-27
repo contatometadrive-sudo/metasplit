@@ -124,6 +124,7 @@ app.get('/api/campaigns', (req, res) => {
 app.post('/api/campaigns', (req, res) => {
   const { name, utmify_dashboard_id, utmify_dashboard_name, destinations } = req.body;
   const domain_url = sanitizeDomainUrl(req.body.domain_url);
+  const product_filter = (req.body.product_filter || '').trim();
 
   if (!name || !domain_url || !Array.isArray(destinations) || !destinations.length)
     return res.status(400).json({ error: 'Campos obrigatórios: name, domain_url, destinations.' });
@@ -136,8 +137,8 @@ app.post('/api/campaigns', (req, res) => {
     return res.status(400).json({ error: `Total do tráfego deve ser 100% (atual: ${total.toFixed(1)}%).` });
 
   const insC = db.prepare(`
-    INSERT INTO campaigns (name, utmify_dashboard_id, utmify_dashboard_name, domain_url)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO campaigns (name, utmify_dashboard_id, utmify_dashboard_name, domain_url, product_filter)
+    VALUES (?, ?, ?, ?, ?)
   `);
   const insD = db.prepare(`
     INSERT INTO destinations (campaign_id, url, src, weight, sort_order)
@@ -146,7 +147,7 @@ app.post('/api/campaigns', (req, res) => {
 
   const create = transaction(() => {
     const { lastInsertRowid: cid } = insC.run(
-      name, utmify_dashboard_id || '', utmify_dashboard_name || '', domain_url
+      name, utmify_dashboard_id || '', utmify_dashboard_name || '', domain_url, product_filter
     );
     destinations.forEach((d, i) => insD.run(cid, d.url, d.src, Number(d.weight), i));
     return cid;
@@ -172,6 +173,7 @@ app.get('/api/campaigns/:id', (req, res) => {
 app.put('/api/campaigns/:id', (req, res) => {
   const { name, destinations } = req.body;
   const domain_url = sanitizeDomainUrl(req.body.domain_url);
+  const product_filter = (req.body.product_filter || '').trim();
 
   if (!name || !domain_url || !Array.isArray(destinations) || !destinations.length)
     return res.status(400).json({ error: 'Campos obrigatórios: name, domain_url, destinations.' });
@@ -186,13 +188,13 @@ app.put('/api/campaigns/:id', (req, res) => {
   const c = db.prepare('SELECT id FROM campaigns WHERE id = ?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
 
-  const updC  = db.prepare('UPDATE campaigns SET name = ?, domain_url = ? WHERE id = ?');
+  const updC  = db.prepare('UPDATE campaigns SET name = ?, domain_url = ?, product_filter = ? WHERE id = ?');
   const nullC = db.prepare('UPDATE clicks SET destination_id = NULL WHERE campaign_id = ?');
   const delD  = db.prepare('DELETE FROM destinations WHERE campaign_id = ?');
   const insD  = db.prepare('INSERT INTO destinations (campaign_id, url, src, weight, sort_order) VALUES (?, ?, ?, ?, ?)');
 
   const update = transaction(() => {
-    updC.run(name, domain_url, req.params.id);
+    updC.run(name, domain_url, product_filter, req.params.id);
     nullC.run(req.params.id);
     delD.run(req.params.id);
     destinations.forEach((d, i) => insD.run(req.params.id, d.url, d.src, Number(d.weight), i));
@@ -610,6 +612,18 @@ app.post('/webhook/payt', (req, res) => {
       if (dest) {
         destinationId = dest.id;
         campaignId    = dest.campaign_id;
+      }
+    }
+
+    // Filtro de produto por campanha — quando preenchido, só aceita vendas
+    // cujo product.name contenha o texto (case-insensitive).
+    if (campaignId) {
+      const camp = db.prepare('SELECT product_filter FROM campaigns WHERE id = ?').get(campaignId);
+      const filter = (camp?.product_filter || '').trim().toLowerCase();
+      if (filter && !String(productName).toLowerCase().includes(filter)) {
+        console.log('[Webhook] descartado por product_filter: campaign=%s filter="%s" produto="%s"',
+          campaignId, filter, productName);
+        return res.json({ received: true, action: 'skipped', reason: 'product_filter_mismatch' });
       }
     }
 

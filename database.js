@@ -14,6 +14,7 @@ db.exec(`
     utmify_dashboard_id TEXT DEFAULT '',
     utmify_dashboard_name TEXT DEFAULT '',
     domain_url TEXT NOT NULL,
+    product_filter TEXT DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -58,6 +59,18 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
+
+// Migrações idempotentes para bancos criados antes de novas colunas.
+// SQLite não suporta "ADD COLUMN IF NOT EXISTS", então tentamos e
+// engolimos o erro de "duplicate column".
+function ensureColumn(table, column, decl) {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e;
+  }
+}
+ensureColumn('campaigns', 'product_filter', "TEXT DEFAULT ''");
 
 // Drop-in replacement for better-sqlite3's db.transaction()
 function transaction(fn) {

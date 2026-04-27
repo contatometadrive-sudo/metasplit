@@ -14,11 +14,33 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const SERVER_URL = 'https://metasplit.online';
 
+// Status considerados "venda confirmada" (entram em faturamento e contagem)
+const APPROVED_STATUSES = ['approved', 'paid'];
+// Status "aguardando pagamento" (mostrados separados, não somam ao faturamento)
+const PENDING_STATUSES  = ['pending', 'waiting_payment', 'waiting'];
+
+const APPROVED_SQL = APPROVED_STATUSES.map(s => `'${s}'`).join(',');
+const PENDING_SQL  = PENDING_STATUSES.map(s => `'${s}'`).join(',');
+
 function sanitizeDomainUrl(url) {
   if (!url) return url;
   url = url.trim();
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
   return url.replace(/\/+$/, '');
+}
+
+// Filtro básico de bot/crawler para o endpoint de tracking.
+// Bloqueia ausência de UA e padrões conhecidos de robôs.
+const BOT_UA_REGEX = /bot|crawl|spider|slurp|fetch\b|monitor|scan|preview|wget|curl|python-requests|axios|node-fetch|java\/|httpclient|okhttp|go-http-client|facebookexternalhit|whatsapp|telegrambot|discordbot|slackbot|googlebot|bingbot|yandex|baidu|duckduck|semrush|ahrefs|mj12|dotbot|petal|applebot|headless|phantomjs|puppeteer|playwright|selenium|lighthouse|gtmetrix|pingdom|uptime/i;
+
+function isLikelyBot(ua) {
+  if (!ua) return true;
+  const trimmed = String(ua).trim();
+  if (trimmed.length < 15) return true;
+  // Browsers reais sempre começam com "Mozilla/" — bibliotecas/bots normalmente não.
+  if (!/mozilla\//i.test(trimmed)) return true;
+  if (BOT_UA_REGEX.test(trimmed)) return true;
+  return false;
 }
 
 function getSetting(key) {
@@ -44,7 +66,7 @@ async function fetchUtmifyOrders(dashboardId, token, startDate, endDate) {
 }
 
 function calcSrcMetrics(payload, src) {
-  let revenue = 0, sales = 0, refunds = 0, pending = 0;
+  let revenue = 0, sales = 0, refunds = 0, pending = 0, pendingRevenue = 0;
   try {
     const orders = payload?.data?.orders ?? payload?.orders ?? payload?.data ?? [];
     for (const o of orders) {
@@ -54,10 +76,10 @@ function calcSrcMetrics(payload, src) {
       const st  = (o.status ?? '').toLowerCase();
       if (['paid','approved','complete','completed'].includes(st))        { revenue += val; sales++; }
       else if (['refunded','cancelled','canceled','chargeback'].includes(st)) refunds++;
-      else if (['pending','waiting','processing'].includes(st))           pending++;
+      else if (['pending','waiting','waiting_payment','processing'].includes(st)) { pending++; pendingRevenue += val; }
     }
   } catch (e) { console.error('calcSrcMetrics:', e.message); }
-  return { revenue, sales, refunds, pending };
+  return { revenue, sales, refunds, pending, pendingRevenue };
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -83,10 +105,12 @@ app.post('/api/settings', (req, res) => {
 app.get('/api/campaigns', (req, res) => {
   const rows = db.prepare(`
     SELECT c.*,
-      COUNT(DISTINCT cl.id)                                              AS total_clicks,
-      COUNT(DISTINCT d.id)                                               AS destination_count,
-      COALESCE(SUM(CASE WHEN s.status='approved' THEN s.amount ELSE 0 END),0) AS total_revenue,
-      COALESCE(SUM(CASE WHEN s.status='approved' THEN 1     ELSE 0 END),0)    AS total_sales
+      COUNT(DISTINCT cl.id)                                                                         AS total_clicks,
+      COUNT(DISTINCT d.id)                                                                          AS destination_count,
+      COALESCE(SUM(CASE WHEN s.status IN (${APPROVED_SQL}) THEN s.amount ELSE 0 END),0)             AS total_revenue,
+      COALESCE(SUM(CASE WHEN s.status IN (${APPROVED_SQL}) THEN 1        ELSE 0 END),0)             AS total_sales,
+      COALESCE(SUM(CASE WHEN s.status IN (${PENDING_SQL})  THEN 1        ELSE 0 END),0)             AS pending_count,
+      COALESCE(SUM(CASE WHEN s.status IN (${PENDING_SQL})  THEN s.amount ELSE 0 END),0)             AS pending_revenue
     FROM campaigns c
     LEFT JOIN clicks       cl ON cl.campaign_id = c.id
     LEFT JOIN destinations d  ON  d.campaign_id = c.id
@@ -237,6 +261,13 @@ app.post('/api/track/:id', (req, res) => {
   const c = db.prepare('SELECT id FROM campaigns WHERE id = ?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
 
+  const ua = req.headers['user-agent'] || '';
+
+  // Filtra bots/crawlers — não conta como clique real
+  if (isLikelyBot(ua)) {
+    return res.json({ success: true, ignored: 'bot' });
+  }
+
   const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
 
   db.prepare(`
@@ -247,7 +278,7 @@ app.post('/api/track/:id', (req, res) => {
     destination_id ?? null,
     JSON.stringify(params || {}),
     ip,
-    req.headers['user-agent'] || '',
+    ua,
     referrer || ''
   );
 
@@ -318,11 +349,12 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
   // Vendas locais (webhook Payt) agrupadas por destination_id
   const localSalesByDest = db.prepare(`
     SELECT destination_id,
-      SUM(CASE WHEN status = 'approved'  THEN amount ELSE 0 END) AS revenue,
-      SUM(CASE WHEN status = 'approved'  THEN 1 ELSE 0 END)      AS sales,
-      SUM(CASE WHEN status = 'refunded'  THEN 1 ELSE 0 END)      AS refunds,
-      SUM(CASE WHEN status = 'chargeback' THEN 1 ELSE 0 END)     AS chargebacks,
-      SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END)      AS pending
+      SUM(CASE WHEN status IN (${APPROVED_SQL}) THEN amount ELSE 0 END) AS revenue,
+      SUM(CASE WHEN status IN (${APPROVED_SQL}) THEN 1      ELSE 0 END) AS sales,
+      SUM(CASE WHEN status = 'refunded'         THEN 1      ELSE 0 END) AS refunds,
+      SUM(CASE WHEN status = 'chargeback'       THEN 1      ELSE 0 END) AS chargebacks,
+      SUM(CASE WHEN status IN (${PENDING_SQL})  THEN 1      ELSE 0 END) AS pending,
+      SUM(CASE WHEN status IN (${PENDING_SQL})  THEN amount ELSE 0 END) AS pending_revenue
     FROM sales
     WHERE campaign_id = ? ${periodClause}
     GROUP BY destination_id
@@ -334,7 +366,9 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
   // Vendas sem destino identificado (src não casou com nenhuma campanha)
   const orphanSales = db.prepare(`
     SELECT
-      SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) AS revenue,
+      SUM(CASE WHEN status IN (${APPROVED_SQL}) THEN amount ELSE 0 END) AS revenue,
+      SUM(CASE WHEN status IN (${APPROVED_SQL}) THEN 1      ELSE 0 END) AS approved_count,
+      SUM(CASE WHEN status IN (${PENDING_SQL})  THEN 1      ELSE 0 END) AS pending_count,
       COUNT(*) AS total
     FROM sales
     WHERE campaign_id = ? AND destination_id IS NULL ${periodClause}
@@ -346,25 +380,26 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
 
     // Prioriza dados locais (webhook); fallback para Utmify
     const local = localSalesMap[d.id];
-    let revenue, sales, refunds, chargebacks, pending;
+    let revenue, sales, refunds, chargebacks, pending, pendingRevenue;
 
     if (local) {
-      revenue     = local.revenue     || 0;
-      sales       = local.sales       || 0;
-      refunds     = local.refunds     || 0;
-      chargebacks = local.chargebacks || 0;
-      pending     = local.pending     || 0;
+      revenue        = local.revenue         || 0;
+      sales          = local.sales           || 0;
+      refunds        = local.refunds         || 0;
+      chargebacks    = local.chargebacks     || 0;
+      pending        = local.pending         || 0;
+      pendingRevenue = local.pending_revenue || 0;
     } else if (utmifyRaw) {
       const m = calcSrcMetrics(utmifyRaw, d.src);
       revenue = m.revenue; sales = m.sales; refunds = m.refunds;
-      chargebacks = 0; pending = m.pending;
+      chargebacks = 0; pending = m.pending; pendingRevenue = m.pendingRevenue || 0;
     } else {
-      revenue = 0; sales = 0; refunds = 0; chargebacks = 0; pending = 0;
+      revenue = 0; sales = 0; refunds = 0; chargebacks = 0; pending = 0; pendingRevenue = 0;
     }
 
     const conv = clicks > 0 ? +((sales / clicks) * 100).toFixed(2) : 0;
     const rpc  = clicks > 0 ? +(revenue / clicks).toFixed(2) : 0;
-    return { ...d, clicks, pctReal, revenue, sales, refunds, chargebacks, pending, conversion: conv, revenuePerClick: rpc };
+    return { ...d, clicks, pctReal, revenue, sales, refunds, chargebacks, pending, pendingRevenue, conversion: conv, revenuePerClick: rpc };
   });
 
   const totalDestClicks = destStats.reduce((s, d) => s + d.clicks, 0);
@@ -376,6 +411,13 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
     GROUP BY status
   `).all(req.params.id);
 
+  // Totais de "Aguardando pagamento" da campanha inteira (incluindo órfãs)
+  const pendingTotals = db.prepare(`
+    SELECT COUNT(*) AS count, COALESCE(SUM(amount),0) AS total
+    FROM sales
+    WHERE campaign_id = ? AND status IN (${PENDING_SQL}) ${periodClause}
+  `).get(req.params.id);
+
   res.json({ period,
     campaign: c,
     totalClicks,
@@ -384,7 +426,13 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
     timeSeries,
     hourly,
     salesSummary,
-    orphanSales: { revenue: orphanSales?.revenue || 0, total: orphanSales?.total || 0 },
+    pending: { count: pendingTotals?.count || 0, total: pendingTotals?.total || 0 },
+    orphanSales: {
+      revenue: orphanSales?.revenue || 0,
+      total: orphanSales?.total || 0,
+      approvedCount: orphanSales?.approved_count || 0,
+      pendingCount: orphanSales?.pending_count || 0
+    },
     localSalesActive: localSalesByDest.length > 0,
     utmifyConnected: !!utmifyRaw,
     utmifyError

@@ -169,6 +169,8 @@ function campaignCard(c) {
           <span class="cc-stat-lbl">Conversão</span>
         </div>
       </div>
+      ${(c.pending_count || 0) > 0 ? `
+        <div class="cc-pending">⏳ ${c.pending_count} aguardando pagamento · ${fmtBRL(c.pending_revenue || 0)}</div>` : ''}
     </div>`;
 }
 
@@ -525,6 +527,24 @@ async function viewDashboard(app, id) {
         ${kpi('📈', avgConv + '%', 'Conversão Geral')}
       </div>
 
+      ${(stats.pending && stats.pending.count > 0) ? `
+        <div class="pending-card">
+          <div class="pending-card-icon">⏳</div>
+          <div class="pending-card-body">
+            <div class="pending-card-label">Aguardando pagamento</div>
+            <div class="pending-card-stats">
+              <div class="pending-card-stat">
+                <span class="pending-card-val">${stats.pending.count.toLocaleString('pt-BR')}</span>
+                <span class="pending-card-sub">venda${stats.pending.count !== 1 ? 's' : ''} pendente${stats.pending.count !== 1 ? 's' : ''}</span>
+              </div>
+              <div class="pending-card-stat">
+                <span class="pending-card-val">${fmtBRL(stats.pending.total)}</span>
+                <span class="pending-card-sub">não somam ao faturamento</span>
+              </div>
+            </div>
+          </div>
+        </div>` : ''}
+
       <div class="dest-comp-grid">
         ${stats.destinations.map((d, i) => `
           <div class="dest-comp-card">
@@ -553,6 +573,8 @@ async function viewDashboard(app, id) {
                 <span class="dcc-lbl">Conversão</span>
               </div>
             </div>
+            ${d.pending > 0 ? `
+              <div class="dcc-pending">⏳ ${d.pending} aguardando · ${fmtBRL(d.pendingRevenue || 0)}</div>` : ''}
           </div>`).join('')}
       </div>
 
@@ -565,7 +587,8 @@ async function viewDashboard(app, id) {
 
       ${stats.orphanSales?.total > 0 ? `
         <div class="alert alert-warn">
-          ⚠ ${stats.orphanSales.total} venda(s) com parâmetro não mapeado (${fmtBRL(stats.orphanSales.revenue)} aprovadas).
+          ⚠ ${stats.orphanSales.total} venda(s) com parâmetro não mapeado
+          (${fmtBRL(stats.orphanSales.revenue)} aprovadas${stats.orphanSales.pendingCount ? `, ${stats.orphanSales.pendingCount} aguardando` : ''}).
         </div>` : ''}`;
 
     drpUpdateLabel(id);

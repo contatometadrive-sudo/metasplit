@@ -14,13 +14,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const SERVER_URL = 'https://metasplit.online';
 
-// Status considerados "venda confirmada" (entram em faturamento e contagem)
+// Status considerados "venda confirmada" (entram em faturamento e contagem).
+// Qualquer outro status é ignorado para fins de métricas.
 const APPROVED_STATUSES = ['approved', 'paid'];
-// Status "aguardando pagamento" (mostrados separados, não somam ao faturamento)
-const PENDING_STATUSES  = ['pending', 'waiting_payment', 'waiting'];
-
 const APPROVED_SQL = APPROVED_STATUSES.map(s => `'${s}'`).join(',');
-const PENDING_SQL  = PENDING_STATUSES.map(s => `'${s}'`).join(',');
 
 function sanitizeDomainUrl(url) {
   if (!url) return url;
@@ -66,7 +63,7 @@ async function fetchUtmifyOrders(dashboardId, token, startDate, endDate) {
 }
 
 function calcSrcMetrics(payload, src) {
-  let revenue = 0, sales = 0, refunds = 0, pending = 0, pendingRevenue = 0;
+  let revenue = 0, sales = 0, refunds = 0;
   try {
     const orders = payload?.data?.orders ?? payload?.orders ?? payload?.data ?? [];
     for (const o of orders) {
@@ -74,12 +71,11 @@ function calcSrcMetrics(payload, src) {
       if (oSrc !== src) continue;
       const val = parseFloat(o.total_value ?? o.value ?? o.amount ?? 0);
       const st  = (o.status ?? '').toLowerCase();
-      if (['paid','approved','complete','completed'].includes(st))        { revenue += val; sales++; }
+      if (['paid','approved','complete','completed'].includes(st))           { revenue += val; sales++; }
       else if (['refunded','cancelled','canceled','chargeback'].includes(st)) refunds++;
-      else if (['pending','waiting','waiting_payment','processing'].includes(st)) { pending++; pendingRevenue += val; }
     }
   } catch (e) { console.error('calcSrcMetrics:', e.message); }
-  return { revenue, sales, refunds, pending, pendingRevenue };
+  return { revenue, sales, refunds };
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -103,19 +99,15 @@ app.post('/api/settings', (req, res) => {
 // ─── Campaigns ────────────────────────────────────────────────────────────────
 
 app.get('/api/campaigns', (req, res) => {
+  // Subqueries em vez de LEFT JOIN + GROUP BY — evita o produto cartesiano
+  // entre clicks × destinations × sales que multiplicava SUM(amount) e contagens.
   const rows = db.prepare(`
     SELECT c.*,
-      COUNT(DISTINCT cl.id)                                                                         AS total_clicks,
-      COUNT(DISTINCT d.id)                                                                          AS destination_count,
-      COALESCE(SUM(CASE WHEN s.status IN (${APPROVED_SQL}) THEN s.amount ELSE 0 END),0)             AS total_revenue,
-      COALESCE(SUM(CASE WHEN s.status IN (${APPROVED_SQL}) THEN 1        ELSE 0 END),0)             AS total_sales,
-      COALESCE(SUM(CASE WHEN s.status IN (${PENDING_SQL})  THEN 1        ELSE 0 END),0)             AS pending_count,
-      COALESCE(SUM(CASE WHEN s.status IN (${PENDING_SQL})  THEN s.amount ELSE 0 END),0)             AS pending_revenue
+      (SELECT COUNT(*) FROM clicks       WHERE campaign_id = c.id)                                                AS total_clicks,
+      (SELECT COUNT(*) FROM destinations WHERE campaign_id = c.id)                                                AS destination_count,
+      (SELECT COALESCE(SUM(amount),0) FROM sales WHERE campaign_id = c.id AND status IN (${APPROVED_SQL}))         AS total_revenue,
+      (SELECT COUNT(*)                FROM sales WHERE campaign_id = c.id AND status IN (${APPROVED_SQL}))         AS total_sales
     FROM campaigns c
-    LEFT JOIN clicks       cl ON cl.campaign_id = c.id
-    LEFT JOIN destinations d  ON  d.campaign_id = c.id
-    LEFT JOIN sales        s  ON  s.campaign_id = c.id
-    GROUP BY c.id
     ORDER BY c.created_at DESC
   `).all();
   res.json(rows);
@@ -354,9 +346,7 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
       SUM(CASE WHEN status IN (${APPROVED_SQL}) THEN amount ELSE 0 END) AS revenue,
       SUM(CASE WHEN status IN (${APPROVED_SQL}) THEN 1      ELSE 0 END) AS sales,
       SUM(CASE WHEN status = 'refunded'         THEN 1      ELSE 0 END) AS refunds,
-      SUM(CASE WHEN status = 'chargeback'       THEN 1      ELSE 0 END) AS chargebacks,
-      SUM(CASE WHEN status IN (${PENDING_SQL})  THEN 1      ELSE 0 END) AS pending,
-      SUM(CASE WHEN status IN (${PENDING_SQL})  THEN amount ELSE 0 END) AS pending_revenue
+      SUM(CASE WHEN status = 'chargeback'       THEN 1      ELSE 0 END) AS chargebacks
     FROM sales
     WHERE campaign_id = ? ${periodClause}
     GROUP BY destination_id
@@ -369,9 +359,7 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
   const orphanSales = db.prepare(`
     SELECT
       SUM(CASE WHEN status IN (${APPROVED_SQL}) THEN amount ELSE 0 END) AS revenue,
-      SUM(CASE WHEN status IN (${APPROVED_SQL}) THEN 1      ELSE 0 END) AS approved_count,
-      SUM(CASE WHEN status IN (${PENDING_SQL})  THEN 1      ELSE 0 END) AS pending_count,
-      COUNT(*) AS total
+      SUM(CASE WHEN status IN (${APPROVED_SQL}) THEN 1      ELSE 0 END) AS total
     FROM sales
     WHERE campaign_id = ? AND destination_id IS NULL ${periodClause}
   `).get(req.params.id);
@@ -382,43 +370,34 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
 
     // Prioriza dados locais (webhook); fallback para Utmify
     const local = localSalesMap[d.id];
-    let revenue, sales, refunds, chargebacks, pending, pendingRevenue;
+    let revenue, sales, refunds, chargebacks;
 
     if (local) {
-      revenue        = local.revenue         || 0;
-      sales          = local.sales           || 0;
-      refunds        = local.refunds         || 0;
-      chargebacks    = local.chargebacks     || 0;
-      pending        = local.pending         || 0;
-      pendingRevenue = local.pending_revenue || 0;
+      revenue     = local.revenue     || 0;
+      sales       = local.sales       || 0;
+      refunds     = local.refunds     || 0;
+      chargebacks = local.chargebacks || 0;
     } else if (utmifyRaw) {
       const m = calcSrcMetrics(utmifyRaw, d.src);
-      revenue = m.revenue; sales = m.sales; refunds = m.refunds;
-      chargebacks = 0; pending = m.pending; pendingRevenue = m.pendingRevenue || 0;
+      revenue = m.revenue; sales = m.sales; refunds = m.refunds; chargebacks = 0;
     } else {
-      revenue = 0; sales = 0; refunds = 0; chargebacks = 0; pending = 0; pendingRevenue = 0;
+      revenue = 0; sales = 0; refunds = 0; chargebacks = 0;
     }
 
     const conv = clicks > 0 ? +((sales / clicks) * 100).toFixed(2) : 0;
     const rpc  = clicks > 0 ? +(revenue / clicks).toFixed(2) : 0;
-    return { ...d, clicks, pctReal, revenue, sales, refunds, chargebacks, pending, pendingRevenue, conversion: conv, revenuePerClick: rpc };
+    return { ...d, clicks, pctReal, revenue, sales, refunds, chargebacks, conversion: conv, revenuePerClick: rpc };
   });
 
   const totalDestClicks = destStats.reduce((s, d) => s + d.clicks, 0);
 
-  // Resumo de vendas por status (todos os destinos desta campanha)
+  // Resumo de vendas aprovadas por status (todos os destinos desta campanha)
   const salesSummary = db.prepare(`
     SELECT status, COUNT(*) AS count, SUM(amount) AS total
-    FROM sales WHERE campaign_id = ? ${periodClause}
+    FROM sales
+    WHERE campaign_id = ? AND status IN (${APPROVED_SQL}) ${periodClause}
     GROUP BY status
   `).all(req.params.id);
-
-  // Totais de "Aguardando pagamento" da campanha inteira (incluindo órfãs)
-  const pendingTotals = db.prepare(`
-    SELECT COUNT(*) AS count, COALESCE(SUM(amount),0) AS total
-    FROM sales
-    WHERE campaign_id = ? AND status IN (${PENDING_SQL}) ${periodClause}
-  `).get(req.params.id);
 
   res.json({ period,
     campaign: c,
@@ -428,13 +407,7 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
     timeSeries,
     hourly,
     salesSummary,
-    pending: { count: pendingTotals?.count || 0, total: pendingTotals?.total || 0 },
-    orphanSales: {
-      revenue: orphanSales?.revenue || 0,
-      total: orphanSales?.total || 0,
-      approvedCount: orphanSales?.approved_count || 0,
-      pendingCount: orphanSales?.pending_count || 0
-    },
+    orphanSales: { revenue: orphanSales?.revenue || 0, total: orphanSales?.total || 0 },
     localSalesActive: localSalesByDest.length > 0,
     utmifyConnected: !!utmifyRaw,
     utmifyError
@@ -450,10 +423,9 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
   {
     "id": "TXN-123456",                  // ID da transação
     "event": "sale.approved",            // Evento: sale.approved | sale.refunded |
-                                         //   sale.cancelled | sale.chargeback |
-                                         //   sale.pending | subscription.activated
-    "status": "approved",                // approved | refunded | cancelled |
-                                         //   chargeback | pending | waiting
+                                         //   sale.cancelled | sale.chargeback
+    "status": "approved",                // approved | paid | refunded |
+                                         //   cancelled | chargeback
     "created_at": "2024-01-01 12:00:00",
     "total": 197.00,                     // Valor bruto da venda (R$)
     "currency": "BRL",
@@ -518,7 +490,6 @@ function extractPaytFields(body) {
   const STATUS_MAP = {
     // V1 Flat
     approved: 'approved', paid: 'approved',
-    waiting_payment: 'pending', waiting: 'pending',
     refunded: 'refunded', chargeback: 'chargeback',
     cancelled: 'cancelled',
     // V1 Nested / legado
@@ -527,7 +498,6 @@ function extractPaytFields(body) {
     reembolsada: 'refunded', 'sale.refunded': 'refunded',
     'sale.chargeback': 'chargeback',
     cancelada: 'cancelled', 'sale.cancelled': 'cancelled',
-    'aguardando pagamento': 'pending', 'sale.pending': 'pending',
   };
   const status = STATUS_MAP[rawStatus] || rawStatus || 'unknown';
 
@@ -633,7 +603,7 @@ app.post('/webhook/payt', (req, res) => {
         'SELECT id FROM sales WHERE external_id = ? AND external_id != \'\''
       ).get(externalId);
       if (existing) {
-        // Atualiza status se a venda já existe (ex: pending → approved)
+        // Atualiza status/valor caso a Payt reenvie o mesmo external_id
         db.prepare('UPDATE sales SET status = ?, amount = ?, event = ? WHERE external_id = ?')
           .run(status, amount, event, externalId);
         return res.json({ received: true, action: 'updated', id: existing.id });

@@ -105,7 +105,7 @@ Campos relevantes:
 |---------------------------|--------------------------------------|
 | `transaction_id`          | ID externo (idempotência)            |
 | `transaction.total_price` | Valor em **centavos** (÷ 100)        |
-| `status`                  | `approved` / `paid` / `waiting_payment` / `refunded` / `chargeback` / `cancelled` |
+| `status`                  | `approved` / `paid` / `refunded` / `chargeback` / `cancelled` |
 | `product.name`            | Nome do produto                      |
 | `link.sources.src`        | **Campo principal** com o `src`      |
 | `customer.email`          | E-mail do comprador                  |
@@ -128,31 +128,32 @@ Campos relevantes:
 
 ### Mapa de status
 
-Convertido em `STATUS_MAP` para um conjunto canônico:
+Convertido em `STATUS_MAP` para um conjunto canônico. **Apenas
+`approved` e `paid` contam como venda e faturamento.** Qualquer outro
+status fica registrado no banco mas não aparece em métricas — boletos
+pendentes, por exemplo, simplesmente não somam ao dashboard.
 
 | Recebido            | Normalizado  | Comportamento                         |
 |---------------------|--------------|---------------------------------------|
 | `approved` / `paid` | `approved`   | Conta como venda + faturamento        |
-| `waiting_payment` / `waiting` | `pending` | Card "Aguardando", **NÃO** soma faturamento |
 | `refunded`          | `refunded`   | Contado em reembolsos                 |
 | `chargeback`        | `chargeback` | Contado em chargebacks                |
 | `cancelled`         | `cancelled`  | Ignorado em métricas                  |
 
-Constantes em `server.js`:
+Constante única em `server.js`:
 
 ```js
 const APPROVED_STATUSES = ['approved', 'paid'];
-const PENDING_STATUSES  = ['pending', 'waiting_payment', 'waiting'];
 ```
 
-Usadas em todas as queries de agregação (faturamento, vendas, pendências)
-para garantir consistência.
+Usada em todas as queries de agregação (faturamento, vendas) — qualquer
+status fora dessa lista é tratado como ruído.
 
 ### Idempotência
 
 Cada venda é deduplicada por `external_id` (transaction_id). Se chega um
-segundo evento com o mesmo ID, o registro existente é **atualizado** —
-isso é como um pedido `pending` vira `approved` quando o boleto é pago.
+segundo evento com o mesmo ID, o registro existente é **atualizado** com
+os novos valores de status e amount.
 
 ### Filtro de bots no tracking
 
@@ -198,7 +199,7 @@ better-sqlite3. O wrapper está em `transaction(fn)` em `database.js`.
 | DELETE | `/api/campaigns/:id`            | Deleta (CASCADE)                         |
 | DELETE | `/api/campaigns/:id/reset`      | Zera clicks + sales (mantém config)      |
 | GET    | `/api/campaigns/:id/generate`   | Baixa o `index.html` redirect            |
-| GET    | `/api/campaigns/:id/stats`      | Stats (período, destinos, pending, …)    |
+| GET    | `/api/campaigns/:id/stats`      | Stats (período, destinos, vendas, …)     |
 | POST   | `/api/track/:id`                | Tracking de cliques (filtro de bot)      |
 | POST   | `/webhook/payt`                 | Webhook Payt V1 Flat / Nested            |
 | GET/POST | `/api/settings`               | Config (Utmify token, etc.)              |

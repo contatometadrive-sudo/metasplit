@@ -91,7 +91,9 @@ literais (não nested). Exemplo:
 ```json
 {
   "transaction_id": "TXN-12345",
-  "transaction.total_price": 19700,
+  "commission.1.amount": 14790,
+  "product.price": 19700,
+  "transaction.total_price": 22700,
   "status": "approved",
   "product.name": "Produto X",
   "link.sources.src": "pv3",
@@ -101,17 +103,24 @@ literais (não nested). Exemplo:
 
 Campos relevantes:
 
-| Chave Payt                | Significado                          |
-|---------------------------|--------------------------------------|
-| `transaction_id`          | ID externo (idempotência)            |
-| `transaction.total_price` | Valor em **centavos** (÷ 100)        |
-| `status`                  | `approved` / `paid` / `refunded` / `chargeback` / `cancelled` |
-| `product.name`            | Nome do produto                      |
-| `link.sources.src`        | **Campo principal** com o `src`      |
-| `customer.email`          | E-mail do comprador                  |
+| Chave Payt                | Significado                                                  |
+|---------------------------|--------------------------------------------------------------|
+| `transaction_id`          | ID externo (idempotência)                                    |
+| `commission.1.amount`     | **Valor real** que entra para o produtor (centavos ÷ 100)    |
+| `product.price`           | Fallback caso `commission.1.amount` não venha (centavos ÷100)|
+| `transaction.total_price` | Total da transação **incluindo order bumps** — NÃO usar      |
+| `status`                  | `approved` / `paid` / `refunded` / `chargeback` / `cancelled` / `canceled` / `expired` |
+| `product.name`            | Nome do produto                                              |
+| `link.sources.src`        | **Campo principal** com o `src`                              |
+| `customer.email`          | E-mail do comprador                                          |
 
-> ⚠ Em JS, acessar `body['transaction.total_price']` (com colchetes) —
-> não funciona com notação ponto.
+> ⚠ Em JS, acessar `body['commission.1.amount']` (com colchetes) — não
+> funciona com notação ponto. O índice `.1` é da Payt (1-based), aponta
+> para a comissão do produtor (`commission.1.type === "producer"`).
+>
+> ⚠ `transaction.total_price` foi a fonte do valor antes da fix de
+> 2025: ele soma order bumps e infla o faturamento. Hoje serve só como
+> referência informativa.
 
 ### Formato V1 Nested (legado)
 
@@ -128,17 +137,19 @@ Campos relevantes:
 
 ### Mapa de status
 
-Convertido em `STATUS_MAP` para um conjunto canônico. **Apenas
-`approved` e `paid` contam como venda e faturamento.** Qualquer outro
-status fica registrado no banco mas não aparece em métricas — boletos
-pendentes, por exemplo, simplesmente não somam ao dashboard.
+Convertido em `STATUS_MAP` para um conjunto canônico. **Apenas vendas
+cujo status normalizado seja `approved` (incluindo `paid`, que é
+mapeado para `approved`) são gravadas.** Qualquer outro status faz o
+webhook responder `{ action: 'skipped', reason: 'status_ignored:<x>' }`
+sem tocar no banco — nada é inserido nem atualizado.
 
-| Recebido            | Normalizado  | Comportamento                         |
-|---------------------|--------------|---------------------------------------|
-| `approved` / `paid` | `approved`   | Conta como venda + faturamento        |
-| `refunded`          | `refunded`   | Contado em reembolsos                 |
-| `chargeback`        | `chargeback` | Contado em chargebacks                |
-| `cancelled`         | `cancelled`  | Ignorado em métricas                  |
+| Recebido                                | Normalizado  | Gravado? |
+|-----------------------------------------|--------------|:--------:|
+| `approved` / `paid` / `aprovada` / `finalizada` / `complete` / `sale.approved` | `approved`   | ✅ |
+| `refunded` / `reembolsada` / `sale.refunded`                                   | `refunded`   | ❌ |
+| `chargeback` / `sale.chargeback`                                               | `chargeback` | ❌ |
+| `cancelled` / `canceled` / `cancelada` / `sale.cancelled`                      | `cancelled`  | ❌ |
+| `expired` / `expirada` / `sale.expired`                                        | `expired`    | ❌ |
 
 Constante única em `server.js`:
 
@@ -146,14 +157,17 @@ Constante única em `server.js`:
 const APPROVED_STATUSES = ['approved', 'paid'];
 ```
 
-Usada em todas as queries de agregação (faturamento, vendas) — qualquer
-status fora dessa lista é tratado como ruído.
+Usada como porta de entrada do webhook **e** em todas as queries de
+agregação. Status fora dessa lista nem chega ao banco.
 
 ### Idempotência
 
 Cada venda é deduplicada por `external_id` (transaction_id). Se chega um
-segundo evento com o mesmo ID, o registro existente é **atualizado** com
-os novos valores de status e amount.
+segundo evento com o mesmo ID **e** ele também é approved/paid, o
+registro existente é atualizado com os novos valores de status e amount.
+Eventos de cancelamento/expiração para um external_id já gravado são
+descartados (a venda permanece aprovada — gerenciamento de chargeback é
+responsabilidade da Payt).
 
 ### Filtro de bots no tracking
 

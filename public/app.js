@@ -874,11 +874,13 @@ async function viewWebhookInfo(app) {
   }, null, 2);
 
   const statusList = [
-    ['approved',   'Venda aprovada / finalizada', 'pos'],
-    ['paid',       'Venda paga (alias de approved)', 'pos'],
-    ['refunded',   'Reembolso efetuado',           'neg'],
-    ['chargeback', 'Chargeback',                   'neg'],
-    ['cancelled',  'Cancelada',                     ''],
+    ['approved',   'Venda aprovada — registrada',         'pos'],
+    ['paid',       'Venda paga — registrada (= approved)', 'pos'],
+    ['refunded',   'Reembolso — ignorado',                 'neg'],
+    ['chargeback', 'Chargeback — ignorado',                'neg'],
+    ['cancelled',  'Cancelada — ignorada',                  ''],
+    ['canceled',   'Cancelada (US) — ignorada',             ''],
+    ['expired',    'Expirada — ignorada',                   ''],
   ];
 
   app.innerHTML = `

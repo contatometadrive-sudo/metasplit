@@ -491,22 +491,28 @@ function extractPaytFields(body) {
     // V1 Flat
     approved: 'approved', paid: 'approved',
     refunded: 'refunded', chargeback: 'chargeback',
-    cancelled: 'cancelled',
+    cancelled: 'cancelled', canceled: 'cancelled',
+    expired: 'expired',
     // V1 Nested / legado
     aprovada: 'approved', finalizada: 'approved', complete: 'approved',
     'sale.approved': 'approved',
     reembolsada: 'refunded', 'sale.refunded': 'refunded',
     'sale.chargeback': 'chargeback',
     cancelada: 'cancelled', 'sale.cancelled': 'cancelled',
+    expirada: 'expired', 'sale.expired': 'expired',
   };
   const status = STATUS_MAP[rawStatus] || rawStatus || 'unknown';
 
   // ── valor ─────────────────────────────────────────────────────────────────
-  // V1 Flat: "transaction.total_price" em centavos
-  // V1 Nested: body.total em reais
+  // Usa o valor da comissão do produtor (commission.1.amount), que é
+  // o que efetivamente entra no caixa — diferente de transaction.total_price,
+  // que soma order bumps e inflaria o faturamento real.
+  // V1 Flat: campos em centavos (÷100). V1 Nested (legado): body.total em reais.
   let amount;
-  if (body?.['transaction.total_price'] != null) {
-    amount = parseFloat(body['transaction.total_price']) / 100;
+  if (body?.['commission.1.amount'] != null) {
+    amount = parseFloat(body['commission.1.amount']) / 100;
+  } else if (body?.['product.price'] != null) {
+    amount = parseFloat(body['product.price']) / 100;
   } else {
     amount = parseFloat(
       body?.total       ??
@@ -566,6 +572,14 @@ app.post('/webhook/payt', (req, res) => {
     console.log('[Webhook] === FIM BODY ===');
     const { src, status, amount, productName, customerEmail, externalId, saleDate, event } =
       extractPaytFields(body);
+
+    // Só registramos vendas confirmadas. Status como cancelled/canceled/
+    // expired/refunded/chargeback são ignorados antes de qualquer escrita
+    // no banco — nem inserem novas linhas, nem atualizam vendas existentes.
+    if (!APPROVED_STATUSES.includes(status)) {
+      console.log('[Webhook] descartado por status="%s" (não é approved/paid)', status);
+      return res.json({ received: true, action: 'skipped', reason: `status_ignored:${status}` });
+    }
 
     // Localiza destino e campanha pelo src
     let destinationId = null;

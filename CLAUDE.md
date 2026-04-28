@@ -169,6 +169,27 @@ Eventos de cancelamento/expiração para um external_id já gravado são
 descartados (a venda permanece aprovada — gerenciamento de chargeback é
 responsabilidade da Payt).
 
+### Timezone — UTC no banco, Brasília na UI
+
+SQLite grava `created_at` em UTC (`CURRENT_TIMESTAMP`). O filtro de
+data do dashboard sempre raciocina em horário de Brasília
+(UTC-3 fixo, sem DST desde 2019):
+
+- O picker no frontend trata Y/M/D como datas calendário de Brasília,
+  mesmo em navegadores fora do BR. `brazilTodayLocalDate()` evita o
+  bug de "hoje" do navegador.
+- Ao aplicar um range, o frontend converte para a janela UTC half-open
+  `[start_BR 00:00 → +3h, end_BR+1 00:00 → +3h)` e envia como
+  `start_utc=YYYY-MM-DD HH:MM:SS&end_utc=...` no formato exato do
+  SQLite (compara lexicograficamente sem `datetime()`).
+- Backend valida com regex estrita antes de interpolar (input do
+  cliente). Se vier inválido, cai pra `brazilPeriodToUtcRange(period)`
+  que computa o mesmo tipo de janela a partir de `period=today/...`.
+- Constante única: `BR_TZ_OFFSET_HOURS = -3` em ambos os lados.
+
+> Resumo da regra: "Hoje" significa **00:00:00 a 23:59:59 horário de
+> Brasília**, em qualquer navegador, em qualquer servidor.
+
 ### Filtro de bots no tracking
 
 `/api/track/:id` rejeita silenciosamente requisições cujo User-Agent:

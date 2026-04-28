@@ -281,16 +281,67 @@ app.post('/api/track/:id', (req, res) => {
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
-function getPeriodClause(period, start, end) {
-  if (start && end) return `AND DATE(created_at) BETWEEN '${start}' AND '${end}'`;
+// Brasil é UTC-3 fixo desde 2019 (sem horário de verão).
+const BR_TZ_OFFSET_HOURS = -3;
+
+// SQLite armazena CURRENT_TIMESTAMP no formato 'YYYY-MM-DD HH:MM:SS' UTC.
+// Convertendo um instante para esse mesmo formato preservamos comparação
+// lexicográfica correta em qualquer query.
+function utcMsToSqliteFormat(ms) {
+  return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+}
+
+// Aceita só "YYYY-MM-DD HH:MM:SS" — qualquer outro valor é rejeitado.
+// Como interpolaremos isso direto no SQL, o regex evita injeção.
+function safeUtcDateTime(s) {
+  if (typeof s !== 'string') return null;
+  return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s) ? s : null;
+}
+
+// Converte um "período relativo" (today/yesterday/7d/30d) para a janela UTC
+// correspondente em horário de Brasília. Retorna null se for "all" / inválido.
+function brazilPeriodToUtcRange(period) {
+  // "Hoje" no fuso de Brasília = agora deslocado para UTC-3, então pegamos
+  // os componentes Y/M/D em UTC (que após o shift representam Brasília).
+  const brShifted = new Date(Date.now() + BR_TZ_OFFSET_HOURS * 3600 * 1000);
+  const y  = brShifted.getUTCFullYear();
+  const m  = brShifted.getUTCMonth();
+  const d  = brShifted.getUTCDate();
+
+  let startDay, endDay;
   switch (period) {
-    case 'today':     return "AND DATE(created_at) = DATE('now','localtime')";
-    case 'yesterday': return "AND DATE(created_at) = DATE('now','localtime','-1 day')";
-    case '7d':        return "AND created_at >= DATE('now','localtime','-6 days')";
-    case '30d':       return "AND created_at >= DATE('now','localtime','-29 days')";
-    case 'all':
-    default:          return '';
+    case 'today':     startDay = d;     endDay = d;     break;
+    case 'yesterday': startDay = d - 1; endDay = d - 1; break;
+    case '7d':        startDay = d - 6; endDay = d;     break;
+    case '30d':       startDay = d - 29;endDay = d;     break;
+    default: return null;
   }
+
+  // Brasília 00:00 = UTC 03:00 (mesma data calendário). Date.UTC trata
+  // overflow de dia/mês/ano automaticamente.
+  const offsetH = -BR_TZ_OFFSET_HOURS;
+  const startMs = Date.UTC(y, m, startDay,     offsetH, 0, 0);
+  const endMs   = Date.UTC(y, m, endDay + 1,   offsetH, 0, 0); // exclusivo
+  return { start: utcMsToSqliteFormat(startMs), end: utcMsToSqliteFormat(endMs) };
+}
+
+function getPeriodClause(query) {
+  // Prioriza start_utc/end_utc enviados pelo frontend (já em UTC, derivados
+  // do calendário em horário de Brasília). Cai pra brazilPeriodToUtcRange
+  // se vier só `period`.
+  let startUtc = safeUtcDateTime(query.start_utc);
+  let endUtc   = safeUtcDateTime(query.end_utc);
+
+  if (!startUtc || !endUtc) {
+    const range = brazilPeriodToUtcRange(query.period || 'all');
+    if (!range) return '';
+    startUtc = range.start;
+    endUtc   = range.end;
+  }
+
+  // Janela half-open: [start, end). Strings já validadas por regex,
+  // interpolar é seguro.
+  return `AND created_at >= '${startUtc}' AND created_at < '${endUtc}'`;
 }
 
 app.get('/api/campaigns/:id/stats', async (req, res) => {
@@ -298,9 +349,7 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
 
   const period = req.query.period || 'all';
-  const start  = req.query.start  || null;
-  const end    = req.query.end    || null;
-  const periodClause = getPeriodClause(period, start, end);
+  const periodClause = getPeriodClause(req.query);
 
   const destinations = db.prepare(
     'SELECT * FROM destinations WHERE campaign_id = ? ORDER BY sort_order'

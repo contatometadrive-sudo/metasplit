@@ -440,10 +440,12 @@ async function viewDashboard(app, id) {
   id = +id;
   drpEnsureInit(id);
   const ds = _drp[id];
-  const startStr = ds.start ? drpDateStr(ds.start) : null;
-  const endStr   = ds.end   ? drpDateStr(ds.end)   : null;
-  const statsUrl = startStr && endStr
-    ? `/api/campaigns/${id}/stats?start=${startStr}&end=${endStr}`
+  // Janela half-open [Brasília 00:00 do start, Brasília 00:00 do dia seguinte ao end)
+  // → convertida para UTC e enviada como start_utc/end_utc.
+  const startUtc = ds.start ? brYmdToSqliteUtc(ds.start.getFullYear(), ds.start.getMonth(), ds.start.getDate(),     0) : null;
+  const endUtc   = ds.end   ? brYmdToSqliteUtc(ds.end.getFullYear(),   ds.end.getMonth(),   ds.end.getDate() + 1, 0) : null;
+  const statsUrl = startUtc && endUtc
+    ? `/api/campaigns/${id}/stats?start_utc=${encodeURIComponent(startUtc)}&end_utc=${encodeURIComponent(endUtc)}`
     : `/api/campaigns/${id}/stats`;
 
   app.innerHTML = spinner();
@@ -599,6 +601,28 @@ const _DRP_MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                      'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const _DRP_DOWS   = ['D','S','T','Q','Q','S','S'];
 
+// Brasil é UTC-3 fixo (sem horário de verão desde 2019).
+// Todas as datas do picker representam o calendário de Brasília — independente
+// do fuso do navegador — e são convertidas para UTC só no momento de enviar
+// para o backend.
+const BR_TZ_OFFSET_HOURS = -3;
+
+// Date local cujos componentes (Y/M/D) refletem o "hoje" de Brasília.
+// Usar `new Date()` direto traria o "hoje" do navegador, errado quando o
+// usuário está fora do BR (ou perto da meia-noite UTC).
+function brazilTodayLocalDate() {
+  const brShifted = new Date(Date.now() + BR_TZ_OFFSET_HOURS * 3600 * 1000);
+  return new Date(brShifted.getUTCFullYear(), brShifted.getUTCMonth(), brShifted.getUTCDate());
+}
+
+// Converte uma data calendário de Brasília (componentes Y/M/D) + hora local
+// BR para o formato "YYYY-MM-DD HH:MM:SS" UTC que o SQLite armazena.
+// Ex.: brYmdToSqliteUtc(2026, 3, 27, 0) → "2026-04-27 03:00:00" (Brasília 00:00).
+function brYmdToSqliteUtc(y, m, d, hour) {
+  const utcHour = hour + (-BR_TZ_OFFSET_HOURS); // soma 3h
+  return new Date(Date.UTC(y, m, d, utcHour, 0, 0)).toISOString().replace('T', ' ').slice(0, 19);
+}
+
 function drpDateStr(d) {
   const y  = d.getFullYear();
   const m  = String(d.getMonth() + 1).padStart(2, '0');
@@ -612,8 +636,8 @@ function drpFmt(d) {
 
 function drpEnsureInit(id) {
   if (!_drp[id]) {
-    const now = new Date();
-    _drp[id] = { start: null, end: null, phase: 'start', month: now.getMonth(), year: now.getFullYear() };
+    const today = brazilTodayLocalDate();
+    _drp[id] = { start: null, end: null, phase: 'start', month: today.getMonth(), year: today.getFullYear() };
   }
 }
 
@@ -661,7 +685,7 @@ function drpRender(id) {
   const panel = document.getElementById(`drp-panel-${id}`);
   if (!panel) return;
   const s     = _drp[id];
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const today = brazilTodayLocalDate();
   const first = new Date(s.year, s.month, 1);
   const last  = new Date(s.year, s.month + 1, 0);
 
@@ -733,7 +757,7 @@ function drpNext(id) {
 
 function drpPreset(id, preset) {
   const s     = _drp[id];
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const today = brazilTodayLocalDate();
   if (preset === 'today') {
     s.start = new Date(today); s.end = new Date(today);
   } else if (preset === 'yesterday') {

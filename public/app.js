@@ -665,12 +665,20 @@ function drpOpen(id) {
   drpEnsureInit(id);
   const panel = document.getElementById(`drp-panel-${id}`);
   if (!panel) return;
+  const wrap = document.getElementById(`drp-${id}`);
+  // Sem isto, drpDayClick chama drpRender que reescreve panel.innerHTML;
+  // quando o evento sobe até o document, e.target já foi destacado do DOM
+  // e wrap.contains(target) vira false, fechando o picker no meio da seleção.
+  if (wrap && !wrap._drpStopBound) {
+    wrap.addEventListener('click', e => e.stopPropagation());
+    wrap._drpStopBound = true;
+  }
   panel.style.display = '';
   drpRender(id);
   if (_drpOutsideHandler) document.removeEventListener('click', _drpOutsideHandler);
   _drpOutsideHandler = e => {
-    const wrap = document.getElementById(`drp-${id}`);
-    if (wrap && !wrap.contains(e.target)) {
+    const w = document.getElementById(`drp-${id}`);
+    if (w && !w.contains(e.target)) {
       drpClose(id);
       document.removeEventListener('click', _drpOutsideHandler);
       _drpOutsideHandler = null;
@@ -738,12 +746,13 @@ function drpDayClick(id, dateStr) {
   const date = new Date(dateStr + 'T00:00:00');
   if (s.phase === 'start' || (s.start && s.end)) {
     s.start = date; s.end = null; s.phase = 'end';
+    drpRender(id);
   } else {
     if (date < s.start) { s.end = s.start; s.start = date; }
     else s.end = date;
     s.phase = 'start';
+    drpApply(id);
   }
-  drpRender(id);
 }
 
 function drpPrev(id) {

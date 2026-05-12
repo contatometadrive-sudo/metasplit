@@ -364,13 +364,13 @@ async function viewEdit(app, id) {
         </div>
       </form>`;
 
-    for (const d of camp.destinations) addDestWithValues(d.url, d.src, d.weight);
+    for (const d of camp.destinations) addDestWithValues(d.url, d.src, d.weight, d.id);
   } catch (e) {
     app.innerHTML = errorBlock('Erro ao carregar campanha: ' + e.message);
   }
 }
 
-function addDestWithValues(url, src, weight) {
+function addDestWithValues(url, src, weight, dbId) {
   const container = document.getElementById('dests');
   const count = container.querySelectorAll('.dest-block').length;
   if (count >= 4) return;
@@ -379,6 +379,7 @@ function addDestWithValues(url, src, weight) {
   const el = document.createElement('div');
   el.className = 'dest-block';
   el.dataset.did = id;
+  if (dbId) el.dataset.dbid = dbId;
   el.innerHTML = `
     <div class="db-head">
       <span class="db-label">Destino ${count + 1}</span>
@@ -415,7 +416,9 @@ async function submitEdit(e, id) {
   const blocks = document.querySelectorAll('.dest-block');
   const destinations = Array.from(blocks).map(b => {
     const did = b.dataset.did;
-    return { url: get(`du_${did}`), src: get(`ds_${did}`), weight: parseFloat(get(`dw_${did}`)) || 0 };
+    const obj = { url: get(`du_${did}`), src: get(`ds_${did}`), weight: parseFloat(get(`dw_${did}`)) || 0 };
+    if (b.dataset.dbid) obj.id = Number(b.dataset.dbid);
+    return obj;
   });
 
   try {

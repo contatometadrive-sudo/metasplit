@@ -180,16 +180,38 @@ app.put('/api/campaigns/:id', (req, res) => {
   const c = db.prepare('SELECT id FROM campaigns WHERE id = ?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
 
-  const updC  = db.prepare('UPDATE campaigns SET name = ?, domain_url = ?, product_filter = ? WHERE id = ?');
-  const nullC = db.prepare('UPDATE clicks SET destination_id = NULL WHERE campaign_id = ?');
-  const delD  = db.prepare('DELETE FROM destinations WHERE campaign_id = ?');
-  const insD  = db.prepare('INSERT INTO destinations (campaign_id, url, src, weight, sort_order) VALUES (?, ?, ?, ?, ?)');
+  // Upsert preservando histórico: destinos com `id` existente são UPDATE in-place,
+  // novos viram INSERT, e só removemos (nullify clicks → delete) os que sumiram.
+  // Antes era delete-and-recreate, que zerava destination_id de TODOS os cliques.
+  const existing = db.prepare('SELECT id FROM destinations WHERE campaign_id = ?').all(req.params.id);
+  const existingIds = new Set(existing.map(d => d.id));
+  const keepIds = new Set(
+    destinations
+      .map(d => Number(d.id))
+      .filter(id => Number.isInteger(id) && id > 0 && existingIds.has(id))
+  );
+  const toRemove = [...existingIds].filter(id => !keepIds.has(id));
+
+  const updC   = db.prepare('UPDATE campaigns SET name = ?, domain_url = ?, product_filter = ? WHERE id = ?');
+  const updD   = db.prepare('UPDATE destinations SET url = ?, src = ?, weight = ?, sort_order = ? WHERE id = ? AND campaign_id = ?');
+  const insD   = db.prepare('INSERT INTO destinations (campaign_id, url, src, weight, sort_order) VALUES (?, ?, ?, ?, ?)');
+  const nullCD = db.prepare('UPDATE clicks SET destination_id = NULL WHERE destination_id = ?');
+  const delD   = db.prepare('DELETE FROM destinations WHERE id = ? AND campaign_id = ?');
 
   const update = transaction(() => {
     updC.run(name, domain_url, product_filter, req.params.id);
-    nullC.run(req.params.id);
-    delD.run(req.params.id);
-    destinations.forEach((d, i) => insD.run(req.params.id, d.url, d.src, Number(d.weight), i));
+    for (const did of toRemove) {
+      nullCD.run(did);
+      delD.run(did, req.params.id);
+    }
+    destinations.forEach((d, i) => {
+      const incomingId = Number(d.id);
+      if (Number.isInteger(incomingId) && incomingId > 0 && existingIds.has(incomingId)) {
+        updD.run(d.url, d.src, Number(d.weight), i, incomingId, req.params.id);
+      } else {
+        insD.run(req.params.id, d.url, d.src, Number(d.weight), i);
+      }
+    });
   });
 
   try {
@@ -251,9 +273,23 @@ app.get('/api/campaigns/:id/generate', (req, res) => {
 // ─── Track ────────────────────────────────────────────────────────────────────
 
 app.post('/api/track/:id', (req, res) => {
-  const { destination_id, params, referrer } = req.body;
+  const { destination_id, params, referrer } = req.body || {};
   const c = db.prepare('SELECT id FROM campaigns WHERE id = ?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Campanha não encontrada.' });
+
+  // destination_id é obrigatório — sem ele, não há como atribuir o clique
+  // a uma variação. Antes aceitávamos null silenciosamente, o que gerou
+  // 100% de "tráfego perdido" em campanhas editadas.
+  const did = Number(destination_id);
+  if (!Number.isInteger(did) || did <= 0) {
+    return res.status(400).json({ error: 'destination_id inválido.' });
+  }
+  const validDest = db.prepare(
+    'SELECT 1 FROM destinations WHERE id = ? AND campaign_id = ?'
+  ).get(did, req.params.id);
+  if (!validDest) {
+    return res.status(400).json({ error: 'destination_id não pertence à campanha.' });
+  }
 
   const ua = req.headers['user-agent'] || '';
 
@@ -269,7 +305,7 @@ app.post('/api/track/:id', (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     req.params.id,
-    destination_id ?? null,
+    did,
     JSON.stringify(params || {}),
     ip,
     ua,
